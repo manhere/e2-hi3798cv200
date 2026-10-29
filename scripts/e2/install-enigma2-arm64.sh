@@ -41,6 +41,11 @@ install)
 # /dev/input is not auto-populated on this box (no HID devices registered), but
 # Components/InputDevice.py hard-requires the directory to exist (os.listdir).
 mkdir -p /dev/input
+# Unbind fbcon (kernel text console) from the framebuffer: otherwise the console
+# blank timer / keypress redraws tty text on top of E2's fb0 output.
+for c in /sys/class/vtconsole/vtcon*; do
+  [ -w "$c/bind" ] && echo 0 > "$c/bind" 2>/dev/null
+done
 exec /usr/bin/enigma2 "$@"
 WRAP
   chmod 755 /usr/local/bin/e2
@@ -57,6 +62,8 @@ After=multi-user.target
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/e2
+# Re-bind fbcon on stop so the text console comes back after E2 exits.
+ExecStopPost=/bin/sh -c 'for c in /sys/class/vtconsole/vtcon*; do echo 1 > "$c/bind" 2>/dev/null; done; true'
 Restart=always
 RestartSec=3
 
