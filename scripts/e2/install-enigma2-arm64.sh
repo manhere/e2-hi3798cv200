@@ -16,6 +16,7 @@ install)
     python3 python3-twisted python3-pil libfreetype6 libfribidi0 libpng16-16 libxml2 \
     libsigc++-3.0-0 libssl3 libasound2 libgcc-s1 libstdc++6 \
     libavahi-client3 libjpeg62-turbo libgif7 libglib2.0-0 \
+    chrony \
     fonts-dejavu-core gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
     gstreamer1.0-alsa \

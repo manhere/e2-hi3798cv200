@@ -48,6 +48,65 @@ sed -i 's/-Werror//g' configure.ac
 grep -q -- '-Werror' configure.ac && { echo "-Werror still present"; exit 1; } || true
 echo "stripped -Werror (configure.ac)"
 
+# histb-vdp fbdev quirks (Hi3798CV200 mainline):
+#  1. FBIOPUT_VSCREENINFO always fails (fixed video timing) -> fb.cpp bails out of
+#     SetMode with -1 and never refreshes stride/mode info.
+#  2. FBIOGET_FSCREENINFO reports a bogus/uninitialised fix.line_length (0xAAAA,
+#     0xFFFF, ... varies per boot) -> spinner blits run off the fb mapping -> SIGSEGV
+#     in gPixmap::blit from the gRC thread.
+#  3. gFBDC then keeps the *requested* surface size (e.g. skin 720x576) while the
+#     scanout stays at the native 1280x720.
+python3 - <<'PYEOF'
+import re
+p = 'lib/gdi/fb.cpp'
+s = open(p, encoding='utf-8').read()
+# (1) tolerate refused mode switch: re-read real geometry below instead of bailing out
+s2, n1 = re.subn(
+    r'eDebug\("\[fb\] FBIOPUT_VSCREENINFO: %m"\);\n(\t+)return -1;',
+    'eDebug("[fb] FBIOPUT_VSCREENINFO: %m");\n'
+    '\\1// Mode switch refused (driver with fixed video timing, e.g. histb-vdp).\n'
+    '\\1// Keep going with the driver\'s current mode; the real geometry is\n'
+    '\\1// re-read below and gFBDC adopts it for the render surface.',
+    s, count=1)
+assert n1 == 1, 'fb.cpp SetMode failure path not found'
+# (2) stride sanity: derive from geometry when fix.line_length is impossible
+s2, n2 = re.subn(
+    r'stride=fix\.line_length;\n\tmemset\(lfb, 0, stride\*yRes\);',
+    'stride=fix.line_length;\n'
+    '\t{\n'
+    '\t\t// some drivers (histb-vdp) report an uninitialised line_length; blits then\n'
+    '\t\t// run off the end of the framebuffer mapping -> SIGSEGV. Fall back to the\n'
+    '\t\t// geometry-derived stride when the report cannot be right.\n'
+    '\t\tunsigned int want = (unsigned int)screeninfo.xres * ((unsigned int)screeninfo.bits_per_pixel / 8);\n'
+    '\t\tif (!want || (unsigned int)stride != want)\n'
+    '\t\t{\n'
+    '\t\t\teDebug("[fb] fix.line_length=%u bogus (xres=%u bpp=%u), using stride=%u",\n'
+    '\t\t\t\t(unsigned)fix.line_length, (unsigned)screeninfo.xres,\n'
+    '\t\t\t\t(unsigned)screeninfo.bits_per_pixel, want);\n'
+    '\t\t\tstride = want;\n'
+    '\t\t}\n'
+    '\t}\n'
+    '\tmemset(lfb, 0, stride*yRes);',
+    s2, count=1)
+assert n2 == 1, 'fb.cpp stride assignment not found'
+open(p, 'w', encoding='utf-8', newline='\n').write(s2)
+print('patched fb.cpp (tolerate refused modeset + stride sanity)')
+
+p = 'lib/gdi/gfbdc.cpp'
+s = open(p, encoding='utf-8').read()
+# (3) adopt the real framebuffer geometry as render surface size
+s2, n3 = re.subn(
+    r'(\t)fb->SetMode\(xres, yres, bpp\);\n',
+    '\\1fb->SetMode(xres, yres, bpp);\n'
+    '\\1// drivers with fixed video timing may refuse the switch — use the real\n'
+    '\\1// framebuffer geometry so the render surface matches the scanout.\n'
+    '\\1fb->getMode(xres, yres, bpp);\n',
+    s, count=1)
+assert n3 == 1, 'gfbdc.cpp SetMode call not found'
+open(p, 'w', encoding='utf-8', newline='\n').write(s2)
+print('patched gfbdc.cpp (adopt real fb geometry)')
+PYEOF
+
 # --- 2. configure (generic box, fbdev main display, alsa audio) -----------------------------
 ./autogen.sh > "$WORK/autogen.out" 2>&1
 # OpenPLi's ax_python_devel.m4 is OE-cross-patched: with a native multiarch libdir
