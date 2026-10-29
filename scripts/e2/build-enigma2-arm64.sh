@@ -105,6 +105,7 @@ s2, n3 = re.subn(
 assert n3 == 1, 'gfbdc.cpp SetMode call not found'
 open(p, 'w', encoding='utf-8', newline='\n').write(s2)
 print('patched gfbdc.cpp (adopt real fb geometry)')
+PYEOF
 
 python3 - <<'PYEOF'
 # (4) enumerate ALL platform (non-USB) DVB adapters: hi3798cv200 has 4 built-in
