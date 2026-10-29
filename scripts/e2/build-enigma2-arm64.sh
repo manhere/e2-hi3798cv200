@@ -26,6 +26,19 @@ ACTUAL="$(git rev-parse HEAD)"
 [ "$ACTUAL" = "$E2_COMMIT" ] || { echo "commit mismatch: $ACTUAL != $E2_COMMIT"; exit 1; }
 echo "enigma2 commit: $ACTUAL"
 
+# mainline kernel UAPI has no SYS_DVBC2 (vendor-kernel extension in fe_delivery_system);
+# guard the switch label in getCapabilities() so it compiles against mainline headers.
+python3 - <<'PYEOF'
+import re
+p = 'lib/dvb/frontend.cpp'
+s = open(p, encoding='utf-8').read()
+s2, n = re.subn(r'([ \t]*)case SYS_DVBC2:([^\n]*break;)',
+                '\\1#ifdef SYS_DVBC2\n\\1case SYS_DVBC2:\\2\n\\1#endif', s)
+assert n == 1, 'SYS_DVBC2 case not found'
+open(p, 'w', encoding='utf-8', newline='\n').write(s2)
+print('guarded SYS_DVBC2 (frontend.cpp)')
+PYEOF
+
 # --- 2. configure (generic box, fbdev main display, alsa audio) -----------------------------
 ./autogen.sh > "$WORK/autogen.out" 2>&1
 # OpenPLi's ax_python_devel.m4 is OE-cross-patched: with a native multiarch libdir
