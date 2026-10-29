@@ -94,4 +94,44 @@ make install >> "$WORK/tuxtxt-make.out" 2>&1
 ldconfig
 pkg-config --modversion tuxbox-tuxtxt
 
-echo "env OK: E2 build deps + libdvbsi++ + libtuxtxt installed"
+# --- 3b. libtuxtxt32bpp (tuxtxt/ subdir of the same repo; enigma2 links -ltuxtxt32bpp) ------
+# OE builds it as recipe "tuxtxt-enigma2" with --with-boxtype=generic. Same acinclude.m4
+# macro problems as libtuxtxt -> apply the identical TUXBOX_APPS_DVB replacement.
+python3 - <<'PYEOF'
+import re
+p = 'tuxtxt/acinclude.m4'
+s = open(p, encoding='utf-8').read()
+start = s.index('AC_DEFUN([TUXBOX_APPS_DVB]')
+nxt = re.search(r'AC_DEFUN\(\[TUXBOX_APPS_(?:CAPTURE|BOXTYPE|HARDWARE)', s[start:])
+end = start + nxt.start()
+s = s[:start] + '''AC_DEFUN([TUXBOX_APPS_DVB],[
+AC_ARG_WITH(dvbincludes,
+\t[  --with-dvbincludes=PATH  path for dvb includes [[NONE]]],
+\t[DVBINCLUDES="$withval"],[DVBINCLUDES=""])
+if test "$DVBINCLUDES"; then
+\tCPPFLAGS="$CPPFLAGS -I$DVBINCLUDES"
+fi
+AC_CHECK_HEADERS([linux/dvb/version.h linux/dvb/dmx.h],[
+\tDVB_API_VERSION=5
+\tAC_DEFINE(HAVE_DVB,1,[Define to 1 if you have the dvb includes])
+\tAC_DEFINE_UNQUOTED(HAVE_DVB_API_VERSION,$DVB_API_VERSION,[Define to the version of the dvb api])
+],[
+\tAC_MSG_ERROR([can't find dvb headers])
+])
+])
+
+''' + s[end:]
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched TUXBOX_APPS_DVB (tuxtxt 32bpp)')
+PYEOF
+sed -i '/#include <tuxbox.h>/d' tuxtxt/tuxtxt_common.h 2>/dev/null || true
+cd tuxtxt
+autoreconf -fi > "$WORK/tuxtxt32bpp-autogen.out" 2>&1
+./configure --prefix=/usr --with-boxtype=generic --with-fbdev=/dev/fb0 \
+  > "$WORK/tuxtxt32bpp-configure.out" 2>&1
+make -j"${JOBS:-4}" >> "$WORK/tuxtxt32bpp-make.out" 2>&1
+make install >> "$WORK/tuxtxt32bpp-make.out" 2>&1
+ldconfig
+ls -l /usr/lib/libtuxtxt32bpp.so.*
+
+echo "env OK: E2 build deps + libdvbsi++ + libtuxtxt + libtuxtxt32bpp installed"

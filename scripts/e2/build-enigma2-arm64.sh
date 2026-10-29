@@ -74,6 +74,8 @@ make install DESTDIR="$WORK/stage" >> "$WORK/make.out" 2>&1
 mkdir -p "$WORK/stage/usr/lib/aarch64-linux-gnu"
 cp -a /usr/lib/aarch64-linux-gnu/libdvbsi++.so.* "$WORK/stage/usr/lib/aarch64-linux-gnu/"
 cp -a /usr/lib/aarch64-linux-gnu/libtuxtxt.so.* "$WORK/stage/usr/lib/aarch64-linux-gnu/"
+cp -a /usr/lib/libtuxtxt32bpp.so.* "$WORK/stage/usr/lib/aarch64-linux-gnu/" 2>/dev/null || \
+  cp -a /usr/lib/aarch64-linux-gnu/libtuxtxt32bpp.so.* "$WORK/stage/usr/lib/aarch64-linux-gnu/"
 mkdir -p "$WORK/stage/usr/share/fonts/ttf"
 DJ=/usr/share/fonts/truetype/dejavu
 ln -sf "$DJ/DejaVuSans.ttf"         "$WORK/stage/usr/share/fonts/ttf/Regular.ttf"
