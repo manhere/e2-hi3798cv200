@@ -54,7 +54,8 @@ git fetch --depth 1 origin "$TUXTXT_COMMIT"
 git checkout --quiet --detach "$TUXTXT_COMMIT"
 echo "tuxtxt commit: $(git rev-parse HEAD)"
 cd libtuxtxt
-./autogen.sh > "$WORK/tuxtxt-autogen.out" 2>&1
+# no autogen.sh in this repo — generate the configure script directly
+autoreconf -fi > "$WORK/tuxtxt-autogen.out" 2>&1
 ./configure --prefix=/usr > "$WORK/tuxtxt-configure.out" 2>&1
 make -j"${JOBS:-4}" >> "$WORK/tuxtxt-make.out" 2>&1
 make install >> "$WORK/tuxtxt-make.out" 2>&1
