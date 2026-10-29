@@ -71,11 +71,15 @@ make -j"$JOBS" > "$WORK/make.out" 2>&1 || { tail -60 "$WORK/make.out"; exit 1; }
 make install DESTDIR="$WORK/stage" >> "$WORK/make.out" 2>&1
 
 # --- 4. ship libdvbsi++ + libtuxtxt runtime .so + fonts inside the tarball -------------------
+# autotools deps installed with --prefix=/usr land in /usr/lib (no multiarch), so probe
+# both /usr/lib/aarch64-linux-gnu and /usr/lib.
 mkdir -p "$WORK/stage/usr/lib/aarch64-linux-gnu"
-cp -a /usr/lib/aarch64-linux-gnu/libdvbsi++.so.* "$WORK/stage/usr/lib/aarch64-linux-gnu/"
-cp -a /usr/lib/aarch64-linux-gnu/libtuxtxt.so.* "$WORK/stage/usr/lib/aarch64-linux-gnu/"
-cp -a /usr/lib/libtuxtxt32bpp.so.* "$WORK/stage/usr/lib/aarch64-linux-gnu/" 2>/dev/null || \
-  cp -a /usr/lib/aarch64-linux-gnu/libtuxtxt32bpp.so.* "$WORK/stage/usr/lib/aarch64-linux-gnu/"
+STAGE_LIB="$WORK/stage/usr/lib/aarch64-linux-gnu"
+for lib in libdvbsi++ libtuxtxt libtuxtxt32bpp; do
+  srcs=$(ls /usr/lib/aarch64-linux-gnu/${lib}.so.* /usr/lib/${lib}.so.* 2>/dev/null || true)
+  [ -n "$srcs" ] || { echo "runtime lib $lib not found in /usr/lib*"; exit 1; }
+  cp -a $srcs "$STAGE_LIB/"
+done
 mkdir -p "$WORK/stage/usr/share/fonts/ttf"
 DJ=/usr/share/fonts/truetype/dejavu
 ln -sf "$DJ/DejaVuSans.ttf"         "$WORK/stage/usr/share/fonts/ttf/Regular.ttf"
