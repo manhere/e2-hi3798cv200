@@ -88,6 +88,20 @@ ln -sf "$DJ/DejaVuSans-Oblique.ttf" "$WORK/stage/usr/share/fonts/ttf/Italic.ttf"
 ln -sf "$DJ/DejaVuSans-ExtraLight.ttf" "$WORK/stage/usr/share/fonts/ttf/Handwriting.ttf" 2>/dev/null || \
   ln -sf "$DJ/DejaVuSansCondensed.ttf" "$WORK/stage/usr/share/fonts/ttf/Handwriting.ttf"
 
+# enigma.info — BoxInfo bootstrap file (Components/SystemInfo.py parses it at import).
+# Without it BoxInfo.getItem("architecture") is None and StartEnigma.py dies with
+# "AttributeError: 'NoneType' object has no attribute 'startswith'".
+# Format: key=value per line; values go through literal_eval (plain strings stay strings);
+# no checksum= line -> content check skipped (only a notice is printed).
+mkdir -p "$WORK/stage/usr/lib"
+cat > "$WORK/stage/usr/lib/enigma.info" <<'EOF'
+brand=HiMedia
+machinebuild=hi3798cv200
+machine=himedia-q10-pro
+model=himedia-q10-pro
+architecture=arm
+EOF
+
 # --- 5. verify + package --------------------------------------------------------------------
 BIN="$WORK/stage/usr/bin/enigma2"
 [ -x "$BIN" ] || { echo "enigma2 binary missing"; exit 1; }
