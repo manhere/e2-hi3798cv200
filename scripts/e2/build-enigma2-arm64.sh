@@ -105,6 +105,63 @@ s2, n3 = re.subn(
 assert n3 == 1, 'gfbdc.cpp SetMode call not found'
 open(p, 'w', encoding='utf-8', newline='\n').write(s2)
 print('patched gfbdc.cpp (adopt real fb geometry)')
+
+python3 - <<'PYEOF'
+# (4) enumerate ALL platform (non-USB) DVB adapters: hi3798cv200 has 4 built-in
+# MXL214 DVB-C adapters (adapter0-3); stock OE code instantiates non-USB
+# adapter0 only and silently drops built-in adapters >0 ("found 1 adapter").
+# Reorder so adapter0 registers first (slot 0 = Tuner A), then instantiate
+# platform adapters 1..N as regular eDVBAdapterLinux.
+p = 'lib/dvb/dvb.cpp'
+s = open(p, encoding='utf-8').read()
+old = (
+    '\tint num_adapter = 1;\n'
+    '\twhile (eDVBAdapterLinux::exist(num_adapter))\n'
+    '\t{\n'
+    '\t\tif (eDVBAdapterLinux::isusb(num_adapter))\n'
+    '\t\t{\n'
+    '\t\t\teDVBAdapterLinux *adapter = new eDVBUsbAdapter(num_adapter);\n'
+    '\t\t\taddAdapter(adapter);\n'
+    '\t\t}\n'
+    '\t\tnum_adapter++;\n'
+    '\t}\n'
+    '\n'
+    '\tif (eDVBAdapterLinux::exist(0))\n'
+    '\t{\n'
+    '\t\teDVBAdapterLinux *adapter = new eDVBAdapterLinux(0);\n'
+    '\t\tadapter->scanDevices();\n'
+    '\t\taddAdapter(adapter, true);\n'
+    '\t}\n'
+)
+new = (
+    '\tif (eDVBAdapterLinux::exist(0))\n'
+    '\t{\n'
+    '\t\teDVBAdapterLinux *adapter = new eDVBAdapterLinux(0);\n'
+    '\t\tadapter->scanDevices();\n'
+    '\t\taddAdapter(adapter, true);\n'
+    '\t}\n'
+    '\n'
+    '\tint num_adapter = 1;\n'
+    '\twhile (eDVBAdapterLinux::exist(num_adapter))\n'
+    '\t{\n'
+    '\t\tif (eDVBAdapterLinux::isusb(num_adapter))\n'
+    '\t\t{\n'
+    '\t\t\teDVBAdapterLinux *adapter = new eDVBUsbAdapter(num_adapter);\n'
+    '\t\t\taddAdapter(adapter);\n'
+    '\t\t}\n'
+    '\t\telse\n'
+    '\t\t{\n'
+    '\t\t\t// platform (non-USB) adapters >0 are real hardware here\n'
+    '\t\t\teDVBAdapterLinux *adapter = new eDVBAdapterLinux(num_adapter);\n'
+    '\t\t\tadapter->scanDevices();\n'
+    '\t\t\taddAdapter(adapter);\n'
+    '\t\t}\n'
+    '\t\tnum_adapter++;\n'
+    '\t}\n'
+)
+assert old in s, 'dvb.cpp adapter enumeration block not found'
+open(p, 'w', encoding='utf-8', newline='\n').write(s.replace(old, new, 1))
+print('patched dvb.cpp (enumerate platform adapters 1..N)')
 PYEOF
 
 # --- 2. configure (generic box, fbdev main display, alsa audio) -----------------------------
