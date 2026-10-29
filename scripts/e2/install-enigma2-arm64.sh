@@ -13,7 +13,7 @@ install)
 
   # runtime packages (E2 core + generic fbdev/alsa + python + fonts)
   apt-get install -y --no-install-recommends \
-    python3 python3-twisted python3-pil libfreetype6 libfribidi0 libpng16-16 libxml2 \
+    python3 python3-twisted python3-pil python3-netifaces libfreetype6 libfribidi0 libpng16-16 libxml2 \
     libsigc++-3.0-0 libssl3 libasound2 libgcc-s1 libstdc++6 \
     libavahi-client3 libjpeg62-turbo libgif7 libglib2.0-0 \
     chrony \
