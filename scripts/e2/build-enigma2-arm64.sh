@@ -39,6 +39,15 @@ open(p, 'w', encoding='utf-8', newline='\n').write(s2)
 print('guarded SYS_DVBC2 (frontend.cpp)')
 PYEOF
 
+# OpenPLi hard-codes -Werror (plus a long OE-tuned -Wno-error exclusion list) in
+# configure.ac. On a native bookworm toolchain upstream warnings like
+# "ISO C++ forbids converting a string constant to 'char*'" (dvb/volume.cpp,
+# ALSA_CARD macro) become fatal, and more will follow. Strip -Werror entirely so
+# every diagnostic stays a warning.
+sed -i 's/-Werror//g' configure.ac
+grep -q -- '-Werror' configure.ac && { echo "-Werror still present"; exit 1; } || true
+echo "stripped -Werror (configure.ac)"
+
 # --- 2. configure (generic box, fbdev main display, alsa audio) -----------------------------
 ./autogen.sh > "$WORK/autogen.out" 2>&1
 # OpenPLi's ax_python_devel.m4 is OE-cross-patched: with a native multiarch libdir
