@@ -53,6 +53,35 @@ cd tuxtxt
 git fetch --depth 1 origin "$TUXTXT_COMMIT"
 git checkout --quiet --detach "$TUXTXT_COMMIT"
 echo "tuxtxt commit: $(git rev-parse HEAD)"
+# TUXBOX_APPS_DVB extracts the DVB API version by preprocessing a conftest inside an
+# AC_CHECK_HEADERS action; with autoconf 2.71 conftest is already gone there, so the
+# version comes out empty and configure errors with "can't find dvb headers".
+# The mainline kernel ships DVB API 5.x — replace the macro with a plain header check.
+python3 - <<'PYEOF'
+p = 'libtuxtxt/acinclude.m4'
+s = open(p, encoding='utf-8').read()
+start = s.index('AC_DEFUN([TUXBOX_APPS_DVB]')
+end = s.index('AC_DEFUN([TUXBOX_APPS_CAPTURE]')
+s = s[:start] + '''AC_DEFUN([TUXBOX_APPS_DVB],[
+AC_ARG_WITH(dvbincludes,
+\t[  --with-dvbincludes=PATH  path for dvb includes [[NONE]]],
+\t[DVBINCLUDES="$withval"],[DVBINCLUDES=""])
+if test "$DVBINCLUDES"; then
+\tCPPFLAGS="$CPPFLAGS -I$DVBINCLUDES"
+fi
+AC_CHECK_HEADERS([linux/dvb/version.h linux/dvb/dmx.h],[
+\tDVB_API_VERSION=5
+\tAC_DEFINE(HAVE_DVB,1,[Define to 1 if you have the dvb includes])
+\tAC_DEFINE_UNQUOTED(HAVE_DVB_API_VERSION,$DVB_API_VERSION,[Define to the version of the dvb api])
+],[
+\tAC_MSG_ERROR([can't find dvb headers])
+])
+])
+
+''' + s[end:]
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched TUXBOX_APPS_DVB')
+PYEOF
 cd libtuxtxt
 # no autogen.sh in this repo — generate the configure script directly
 autoreconf -fi > "$WORK/tuxtxt-autogen.out" 2>&1
