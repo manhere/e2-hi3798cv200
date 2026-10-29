@@ -23,15 +23,27 @@ install)
 
   tar -C / -xzf "$T"
 
+  # E2-DarkOS / PLi-HD skins are separate OE packages, not shipped by enigma2's
+  # make install — point the default skin at the in-tree skin_default so startup
+  # doesn't attempt a missing E2-DarkOS skin every boot.
+  if [ ! -f /usr/etc/enigma2/settings ]; then
+    mkdir -p /usr/etc/enigma2
+    echo 'config.skin.primary_skin=skin_default/skin.xml' > /usr/etc/enigma2/settings
+  fi
+
   # /proc/stb does not exist on the mainline kernel — E2 logs harmless errors for those
   # writes; a proper shim module is Phase 3.
   cat > /usr/local/bin/e2 <<'WRAP'
 #!/bin/sh
 # Enigma2 (mainline port) launcher — generic fbdev OSD on /dev/fb0 (histb-vdp),
 # ALSA audio, evdev remote. Do not run while Kodi is holding DRM master.
+# /dev/input is not auto-populated on this box (no HID devices registered), but
+# Components/InputDevice.py hard-requires the directory to exist (os.listdir).
+mkdir -p /dev/input
 exec /usr/bin/enigma2 "$@"
 WRAP
   chmod 755 /usr/local/bin/e2
+  mkdir -p /dev/input
 
   echo "== verify"
   ldd /usr/bin/enigma2 | grep 'not found' && echo "MISSING libs above" || echo "all libs resolved"

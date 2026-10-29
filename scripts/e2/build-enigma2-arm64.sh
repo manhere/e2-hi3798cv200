@@ -102,6 +102,15 @@ model=himedia-q10-pro
 architecture=arm
 EOF
 
+# skin_default/skin.xml declares font 'tuxtxt.ttf' (from the tuxtxt/ subdir font install);
+# without it the whole skin fails to parse and E2 falls back to the bare emergency style.
+found_tuxtxt_font=""
+for f in /usr/share/fonts/tuxtxt.ttf /usr/share/fonts/ttf/tuxtxt.ttf; do
+  if [ -f "$f" ]; then cp -a "$f" "$WORK/stage/usr/share/fonts/"; found_tuxtxt_font="$f"; break; fi
+done
+[ -n "$found_tuxtxt_font" ] || { echo "tuxtxt.ttf not found in /usr/share/fonts*"; exit 1; }
+echo "shipped tuxtxt font: $found_tuxtxt_font"
+
 # --- 5. verify + package --------------------------------------------------------------------
 BIN="$WORK/stage/usr/bin/enigma2"
 [ -x "$BIN" ] || { echo "enigma2 binary missing"; exit 1; }
