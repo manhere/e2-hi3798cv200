@@ -93,6 +93,7 @@ make -j"${JOBS:-4}" >> "$WORK/tuxtxt-make.out" 2>&1
 make install >> "$WORK/tuxtxt-make.out" 2>&1
 ldconfig
 pkg-config --modversion tuxbox-tuxtxt
+cd ..   # back to tuxtxt repo root (libtuxtxt section ended inside libtuxtxt/)
 
 # --- 3b. libtuxtxt32bpp (tuxtxt/ subdir of the same repo; enigma2 links -ltuxtxt32bpp) ------
 # OE builds it as recipe "tuxtxt-enigma2" with --with-boxtype=generic. Same acinclude.m4
