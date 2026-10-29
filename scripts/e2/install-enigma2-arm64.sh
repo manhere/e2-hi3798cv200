@@ -46,6 +46,27 @@ WRAP
   chmod 755 /usr/local/bin/e2
   mkdir -p /dev/input
 
+  # E2 intentionally quits after first-boot steps (e.g. applying a new language) to
+  # restart its GUI — a real box has an init script that relaunches it. Provide a
+  # systemd service with Restart=always so the GUI survives those self-restarts.
+  cat > /etc/systemd/system/e2.service <<'UNIT'
+[Unit]
+Description=Enigma2 (mainline port, hi3798cv200)
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/e2
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable e2.service 2>/dev/null || true
+  echo "start with: systemctl start e2   (auto-restarts on E2 self-restart/quit)"
+
   echo "== verify"
   ldd /usr/bin/enigma2 | grep 'not found' && echo "MISSING libs above" || echo "all libs resolved"
   echo "run: e2  (from a local console / console=tty0, NOT needed over ssh since fbdev writes directly)"

@@ -160,6 +160,10 @@ machine=himedia-q10-pro
 model=himedia-q10-pro
 architecture=arm
 EOF
+# append a valid checksum so BoxInfo reports "data loaded" instead of "checksum failed"
+# (an invalid checksum triggers the IncorrectBoxInfoWizard on every first boot).
+CS=$(md5sum "$WORK/stage/usr/lib/enigma.info" | cut -d' ' -f1)
+echo "checksum=$CS" >> "$WORK/stage/usr/lib/enigma.info"
 
 # skin_default/skin.xml declares font 'tuxtxt.ttf' (from the tuxtxt/ subdir font install);
 # without it the whole skin fails to parse and E2 falls back to the bare emergency style.
