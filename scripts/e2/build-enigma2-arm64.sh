@@ -34,6 +34,9 @@ echo "enigma2 commit: $ACTUAL"
 # fails ("Could not link test program to Python" -> Giving up).
 # The macro only derives flags when PYTHON_CPPFLAGS is empty, so pre-set it.
 export PYTHON_CPPFLAGS="-I$(python3 -c 'import sysconfig; print(sysconfig.get_path("include"))')"
+# same m4 hack also mangles the site-packages path into /aarch64-linux-gnu/usr/lib/...
+# (would misplace E2's python files under DESTDIR staging) -> pre-set it as well.
+export PYTHON_SITE_PKG="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
 ./configure --prefix=/usr \
   --with-boxtype=none \
   --with-fbdev=/dev/fb0 \
@@ -45,9 +48,10 @@ grep -E "boxtype|alsa|fbdev" "$WORK/configure.out" | head -5 || true
 make -j"$JOBS" > "$WORK/make.out" 2>&1 || { tail -60 "$WORK/make.out"; exit 1; }
 make install DESTDIR="$WORK/stage" >> "$WORK/make.out" 2>&1
 
-# --- 4. ship libdvbsi++ runtime .so + fonts inside the tarball -------------------------------
+# --- 4. ship libdvbsi++ + libtuxtxt runtime .so + fonts inside the tarball -------------------
 mkdir -p "$WORK/stage/usr/lib/aarch64-linux-gnu"
 cp -a /usr/lib/aarch64-linux-gnu/libdvbsi++.so.* "$WORK/stage/usr/lib/aarch64-linux-gnu/"
+cp -a /usr/lib/aarch64-linux-gnu/libtuxtxt.so.* "$WORK/stage/usr/lib/aarch64-linux-gnu/"
 mkdir -p "$WORK/stage/usr/share/fonts/ttf"
 DJ=/usr/share/fonts/truetype/dejavu
 ln -sf "$DJ/DejaVuSans.ttf"         "$WORK/stage/usr/share/fonts/ttf/Regular.ttf"
