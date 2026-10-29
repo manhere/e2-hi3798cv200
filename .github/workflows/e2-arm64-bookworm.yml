@@ -1,0 +1,76 @@
+# Build OpenPLi Enigma2 (scarthgap) for Debian 12 (bookworm) arm64 — the E2 port, Phase 1.
+#
+# Goal: generic fbdev Enigma2 on the box — --with-boxtype=none, /dev/fb0 comes from the
+# histb-vdp KMS fbdev emulation, ALSA audio, evdev remote. NO vendor HAVE_HISILICON
+# code (that path assumes vendor-kernel hifb/proc-stb/DVB-video0, none of which exist
+# on the mainline 6.12 kernel).
+#
+# DVB status on the box: 4x MaxLinear MxL214 DVB-C frontends via histb-dmx (adapters
+# 0-3, standard /dev/dvb) — usable by E2's DVB layer as-is. TV *playback* (decode)
+# is Phase 2/3: the kernel exposes V4L2 m2m (histb-vdec), not a DVB video0 device.
+#
+# bookworm gaps: libdvbsi++ dropped from Debian -> built from tuxbox-neutrino/libdvbsi.
+name: e2-arm64-bookworm
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/e2-arm64-bookworm.yml'
+      - 'scripts/e2/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2-arm64-bookworm
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Enigma2 (OpenPLi scarthgap, arm64, Debian 12)
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 120
+    env:
+      JOBS: '4'
+    steps:
+      - name: Install git (needed by actions/checkout inside the container)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends git ca-certificates curl xz-utils
+
+      - uses: actions/checkout@v4
+
+      - name: Build environment (bookworm deps, libdvbsi++)
+        env:
+          WORK: ${{ github.workspace }}/build/env
+        run: bash scripts/e2/bookworm-env.sh
+
+      - name: Build Enigma2 (OpenPLi scarthgap, native arm64)
+        env:
+          WORK: ${{ github.workspace }}/build/e2
+        run: bash scripts/e2/build-enigma2-arm64.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2-arm64-bookworm
+          if-no-files-found: error
+          path: |
+            build/e2/e2-arm64.tar.gz
+            build/e2/e2-arm64.tar.gz.sha256
+            build/e2/install-enigma2-arm64.sh
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2-arm64-bookworm-logs
+          if-no-files-found: ignore
+          path: |
+            build/env/*.out
+            build/e2/*.out
+            build/e2/make.out
+            build/e2/runtime-deps.txt
