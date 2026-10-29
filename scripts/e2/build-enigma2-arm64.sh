@@ -28,6 +28,12 @@ echo "enigma2 commit: $ACTUAL"
 
 # --- 2. configure (generic box, fbdev main display, alsa audio) -----------------------------
 ./autogen.sh > "$WORK/autogen.out" 2>&1
+# OpenPLi's ax_python_devel.m4 is OE-cross-patched: with a native multiarch libdir
+# (/usr/lib/aarch64-linux-gnu) it mangles PYTHON_CPPFLAGS into
+# "-I/aarch64-linux-gnu/usr/include/python3.11" and the dev-env consistency check
+# fails ("Could not link test program to Python" -> Giving up).
+# The macro only derives flags when PYTHON_CPPFLAGS is empty, so pre-set it.
+export PYTHON_CPPFLAGS="-I$(python3 -c 'import sysconfig; print(sysconfig.get_path("include"))')"
 ./configure --prefix=/usr \
   --with-boxtype=none \
   --with-fbdev=/dev/fb0 \
