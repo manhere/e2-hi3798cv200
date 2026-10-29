@@ -82,6 +82,9 @@ AC_CHECK_HEADERS([linux/dvb/version.h linux/dvb/dmx.h],[
 open(p, 'w', encoding='utf-8', newline='\n').write(s)
 print('patched TUXBOX_APPS_DVB')
 PYEOF
+# vestigial dbox2-era include: <tuxbox.h> (libtuxbox) is pulled in by tuxtxt_common.h
+# but no tuxbox_* symbol is ever used -> drop it instead of porting libtuxbox.
+sed -i '/#include <tuxbox.h>/d' libtuxtxt/tuxtxt_common.h
 cd libtuxtxt
 # no autogen.sh in this repo — generate the configure script directly
 autoreconf -fi > "$WORK/tuxtxt-autogen.out" 2>&1
