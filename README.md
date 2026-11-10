@@ -19,7 +19,10 @@ All kernel facts below come from the pinned upstream commit, not from vendor BSP
 | Board DTS | `arch/arm64/boot/dts/hisilicon/hi3798cv200-dvbip-1002-arm64.dts` |
 
 `scripts/e2/bookworm-env.sh` installs the **DVB UAPI headers of that exact commit**
-(`include/uapi/linux/dvb/*.h`, DVB API 5.12) into `/usr/local/include/linux/dvb`.
+(`include/uapi/linux/dvb/*.h`, DVB API 5.12) into `/usr/local/include/linux/dvb`,
+applying the same sanitisation as the kernel's `scripts/headers_install.sh`
+(`__user`/`__force`/`__iomem`, `<linux/compiler.h>`, …) — raw in-tree UAPI headers
+are kernel-side sources and do not compile in userspace as-is.
 Debian bookworm's `linux-libc-dev` is 6.1 and predates `SYS_DVBC2` (mainline since
 v6.2), which is why the old build masked that switch case with `#ifdef`. The port now
 compiles against the same UAPI as the running kernel, so no masking is needed. Keep
@@ -40,7 +43,7 @@ the pin in `bookworm-env.sh` in sync when the box kernel is updated.
 ## Port strategy
 
 Phase 1 (this repo, CI green = artifact `e2-arm64-bookworm`):
-- OpenPLi/enigma2 `scarthgap` pinned `21b0fbb8`, built with `--with-boxtype=none
+- OpenPLi/enigma2 `scarthgap` pinned `6a5eb2e2` (HEAD 2026-11-07), built with `--with-boxtype=none
   --with-fbdev=/dev/fb0 --with-alsa` — the **generic fbdev path**, no vendor
   `HAVE_HISILICON` code (that assumes vendor-kernel hifb/proc-stb/DVB-video0).
 - Source patches are derived from the kernel implementation, not from symptoms:

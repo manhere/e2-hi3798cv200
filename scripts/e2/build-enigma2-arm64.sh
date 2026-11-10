@@ -16,7 +16,7 @@ JOBS="${JOBS:-4}"
 
 E2_REPO='https://github.com/OpenPLi/enigma2'
 E2_BRANCH='scarthgap'
-E2_COMMIT='21b0fbb801147ebb5ab810bba448e6a19d3dda3c'  # 2026-10-27
+E2_COMMIT='6a5eb2e2edd414db5b4ded7fbc79b0822324d508'  # scarthgap HEAD 2026-11-07
 
 mkdir -p "$WORK/src" "$WORK/stage"
 cd "$WORK"

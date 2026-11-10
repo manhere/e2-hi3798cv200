@@ -53,9 +53,29 @@ open(sys.argv[2], 'wb').write(base64.b64decode(d['content']))
 PY
   fi
 done
-# fail fast on a wrong pin / partial download
+# Raw include/uapi headers are KERNEL-side sources, not installed userspace
+# headers. `make headers_install` runs scripts/headers_install.sh first: it
+# strips __user/__force/__iomem (osd.h/video.h), drops <linux/compiler.h>
+# (osd.h) and normalises a few attributes. Reproduce those exact sed rules
+# here; without them g++ fails on video.h:133 ("char __user *iFrame").
+# __KERNEL__-guarded sections need no unifdef: userspace never defines it, so
+# the preprocessor already picks the exported branches.
+for h in audio.h ca.h dmx.h frontend.h net.h osd.h version.h video.h; do
+  sed -E -i \
+    -e 's/([[:space:](])(__user|__force|__iomem)[[:space:]]/\1/g' \
+    -e 's/__attribute_const__([[:space:]]|$)/\1/g' \
+    -e 's@^#include <linux/compiler(|_types).h>@@' \
+    -e 's/(^|[^a-zA-Z0-9])__packed([^a-zA-Z0-9_]|$)/\1__attribute__((packed))\2/g' \
+    -e 's/(^|[[:space:](])(inline|asm|volatile)([[:space:](]|$)/\1__\2__\3/g' \
+    -e 's@#(ifndef|define|endif[[:space:]]*/[*])[[:space:]]*_UAPI@#\1 @' \
+    "$UAPI_DIR/$h"
+done
+# fail fast on a wrong pin / partial download / unsanitised header
 grep -q 'SYS_DVBC2' "$UAPI_DIR/frontend.h" || { echo "upstream frontend.h lacks SYS_DVBC2"; exit 1; }
 grep -q '#define DVB_API_VERSION 5' "$UAPI_DIR/version.h" || { echo "unexpected DVB UAPI version"; exit 1; }
+if grep -qE '__user|__force|__iomem|<linux/compiler' "$UAPI_DIR"/*.h; then
+  echo "kernel-only annotations left in DVB UAPI headers"; exit 1
+fi
 echo "DVB UAPI from $KERNEL_REPO@$KERNEL_REF: $(grep DVB_API_VERSION_MINOR "$UAPI_DIR/version.h")"
 
 # --- 2. libdvbsi++ (E2 DVB SI parser; not packaged in bookworm) ----------------------------
