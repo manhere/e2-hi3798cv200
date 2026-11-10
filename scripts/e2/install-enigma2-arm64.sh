@@ -1,8 +1,9 @@
 #!/bin/bash
-# Install the Enigma2 port on the box (Debian 12 arm64, mainline 6.12 kernel).
+# Install the Enigma2 port on the box (Debian 12 arm64, mainline 6.12.115 kernel).
 #   sudo ./install-enigma2-arm64.sh install          # deps + extract + launcher
 #   sudo ./install-enigma2-arm64.sh uninstall        # removes files; keeps /etc/enigma2 + /root/.enigma2
-# Phase 1: UI only. DVB frontends exist (MXL214, adapters 0-3); TV playback pipeline comes later.
+# Phase 1: UI only. DVB frontends exist (MXL214, adapters 0-3, ca0..ca3 per
+# adapter); TV playback decode pipeline comes later.
 set -euo pipefail
 
 case "${1:-}" in
@@ -38,8 +39,10 @@ install)
 #!/bin/sh
 # Enigma2 (mainline port) launcher — generic fbdev OSD on /dev/fb0 (histb-vdp),
 # ALSA audio, evdev remote. Do not run while Kodi is holding DRM master.
-# /dev/input is not auto-populated on this box (no HID devices registered), but
-# Components/InputDevice.py hard-requires the directory to exist (os.listdir).
+# The 6.12.115 kernel registers the HiSTB IR receiver (IR_HIX5HD2=m +
+# INPUT_EVDEV=y), so /dev/input/eventX normally exists; keep the mkdir as a
+# guard for boxes booted without the IR module — Components/InputDevice.py
+# hard-requires the directory to exist (os.listdir).
 mkdir -p /dev/input
 # Unbind fbcon (kernel text console) from the framebuffer: otherwise the console
 # blank timer / keypress redraws tty text on top of E2's fb0 output.

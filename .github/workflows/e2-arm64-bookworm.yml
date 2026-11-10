@@ -5,11 +5,14 @@
 # code (that path assumes vendor-kernel hifb/proc-stb/DVB-video0, none of which exist
 # on the mainline 6.12 kernel).
 #
-# DVB status on the box: 4x MaxLinear MxL214 DVB-C frontends via histb-dmx (adapters
-# 0-3, standard /dev/dvb) — usable by E2's DVB layer as-is. TV *playback* (decode)
-# is Phase 2/3: the kernel exposes V4L2 m2m (histb-vdec), not a DVB video0 device.
+# DVB status on the box: 4x MaxLinear MxL214 DVB-C frontends via histb-dmx (one
+# adapter per TS input, adapters 0-3, ca0..ca3 aliases on each) — usable by E2's
+# DVB layer as-is. TV *playback* (decode) is Phase 2/3: the kernel exposes V4L2 m2m
+# (histb-vdec), not a DVB video0 device.
 #
-# bookworm gaps: libdvbsi++ dropped from Debian -> built from tuxbox-neutrino/libdvbsi.
+# bookworm gaps: libdvbsi++ dropped from Debian -> built from tuxbox-neutrino/libdvbsi;
+# linux-libc-dev 6.1 DVB UAPI is stale -> the pinned upstream 6.12.115 UAPI headers
+# are installed by scripts/e2/bookworm-env.sh and used by E2 + tuxtxt.
 name: e2-arm64-bookworm
 
 on:

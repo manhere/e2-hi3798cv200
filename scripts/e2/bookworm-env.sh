@@ -6,6 +6,10 @@
 # bookworm gaps:
 #   - libdvbsi++ was dropped from Debian -> built from source (tuxbox-neutrino/libdvbsi)
 #     into /usr of the container; the runtime .so ships inside the enigma2 tarball.
+#   - linux-libc-dev is 6.1, while the box runs the HiSTB 6.12.115 kernel:
+#     its linux/dvb/frontend.h predates SYS_DVBC2 (mainline since v6.2) and its
+#     DVB API minor is older. Install the DVB UAPI headers from the EXACT upstream
+#     kernel commit below so E2/tuxtxt see the same API as the running kernel.
 set -euo pipefail
 
 WORK="${WORK:?set WORK to the env build dir}"
@@ -20,11 +24,39 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends \
   build-essential pkgconf autoconf automake libtool gettext git \
-  python3 python3-dev python3-setuptools swig \
+  python3 python3-dev python3-setuptools swig curl ca-certificates \
   libfreetype-dev libfribidi-dev libglib2.0-dev libpng-dev libxml2-dev \
   libsigc++-3.0-dev libssl-dev fonts-dejavu-core \
   libavahi-client-dev libjpeg-dev libgif-dev libasound2-dev libcrypt-dev \
   > "$WORK/apt.out" 2>&1
+
+# --- 1b. DVB UAPI headers from the upstream kernel running on the box -----------------------
+# Pin the exact HiSilicon-Development/linux-6.12.y commit (Makefile 6.12.115,
+# HEAD 2026-11-09) instead of tracking a moving branch: the binary must be built
+# against the same UAPI as the flashed kernel + module tree.
+KERNEL_REPO='HiSilicon-Development/linux-6.12.y'
+KERNEL_REF='0e14b052c61c4ffa2cc57f299d136fd404f9988f'
+KERNEL_UAPI="https://raw.githubusercontent.com/$KERNEL_REPO/$KERNEL_REF/include/uapi/linux/dvb"
+UAPI_DIR=/usr/local/include/linux/dvb
+mkdir -p "$UAPI_DIR"
+for h in audio.h ca.h dmx.h frontend.h net.h osd.h version.h video.h; do
+  if ! curl -fsSL --retry 3 --retry-delay 2 "$KERNEL_UAPI/$h" -o "$UAPI_DIR/$h"; then
+    # raw.githubusercontent.com can be blocked on some networks; fall back to
+    # the GitHub contents API (base64) for the same pinned commit.
+    curl -fsSL --retry 3 --retry-delay 2 \
+      "https://api.github.com/repos/$KERNEL_REPO/contents/include/uapi/linux/dvb/$h?ref=$KERNEL_REF" \
+      -o "$WORK/uapi-$h.json"
+    python3 - "$WORK/uapi-$h.json" "$UAPI_DIR/$h" <<'PY'
+import base64, json, sys
+d = json.load(open(sys.argv[1]))
+open(sys.argv[2], 'wb').write(base64.b64decode(d['content']))
+PY
+  fi
+done
+# fail fast on a wrong pin / partial download
+grep -q 'SYS_DVBC2' "$UAPI_DIR/frontend.h" || { echo "upstream frontend.h lacks SYS_DVBC2"; exit 1; }
+grep -q '#define DVB_API_VERSION 5' "$UAPI_DIR/version.h" || { echo "unexpected DVB UAPI version"; exit 1; }
+echo "DVB UAPI from $KERNEL_REPO@$KERNEL_REF: $(grep DVB_API_VERSION_MINOR "$UAPI_DIR/version.h")"
 
 # --- 2. libdvbsi++ (E2 DVB SI parser; not packaged in bookworm) ----------------------------
 DVBSI_REPO='https://github.com/tuxbox-neutrino/libdvbsi'
@@ -56,7 +88,9 @@ echo "tuxtxt commit: $(git rev-parse HEAD)"
 # TUXBOX_APPS_DVB extracts the DVB API version by preprocessing a conftest inside an
 # AC_CHECK_HEADERS action; with autoconf 2.71 conftest is already gone there, so the
 # version comes out empty and configure errors with "can't find dvb headers".
-# The mainline kernel ships DVB API 5.x — replace the macro with a plain header check.
+# The pinned upstream kernel ships DVB API 5.12 (include/uapi/linux/dvb/version.h);
+# tuxtxt only compares the major version, so replace the broken sniffer with a
+# plain header check that sets HAVE_DVB_API_VERSION=5.
 python3 - <<'PYEOF'
 p = 'libtuxtxt/acinclude.m4'
 s = open(p, encoding='utf-8').read()
@@ -88,7 +122,8 @@ sed -i '/#include <tuxbox.h>/d' libtuxtxt/tuxtxt_common.h
 cd libtuxtxt
 # no autogen.sh in this repo — generate the configure script directly
 autoreconf -fi > "$WORK/tuxtxt-autogen.out" 2>&1
-./configure --prefix=/usr > "$WORK/tuxtxt-configure.out" 2>&1
+./configure --prefix=/usr --with-dvbincludes=/usr/local/include \
+  > "$WORK/tuxtxt-configure.out" 2>&1
 make -j"${JOBS:-4}" >> "$WORK/tuxtxt-make.out" 2>&1
 make install >> "$WORK/tuxtxt-make.out" 2>&1
 ldconfig
@@ -97,7 +132,8 @@ cd ..   # back to tuxtxt repo root (libtuxtxt section ended inside libtuxtxt/)
 
 # --- 3b. libtuxtxt32bpp (tuxtxt/ subdir of the same repo; enigma2 links -ltuxtxt32bpp) ------
 # OE builds it as recipe "tuxtxt-enigma2" with --with-boxtype=generic. Same acinclude.m4
-# macro problems as libtuxtxt -> apply the identical TUXBOX_APPS_DVB replacement.
+# macro problems as libtuxtxt -> apply the identical TUXBOX_APPS_DVB replacement
+# (DVB API 5.12 from the pinned upstream UAPI headers installed in step 1b).
 python3 - <<'PYEOF'
 import re
 p = 'tuxtxt/acinclude.m4'
@@ -129,10 +165,11 @@ sed -i '/#include <tuxbox.h>/d' tuxtxt/tuxtxt_common.h 2>/dev/null || true
 cd tuxtxt
 autoreconf -fi > "$WORK/tuxtxt32bpp-autogen.out" 2>&1
 ./configure --prefix=/usr --with-boxtype=generic --with-fbdev=/dev/fb0 \
+  --with-dvbincludes=/usr/local/include \
   > "$WORK/tuxtxt32bpp-configure.out" 2>&1
 make -j"${JOBS:-4}" >> "$WORK/tuxtxt32bpp-make.out" 2>&1
 make install >> "$WORK/tuxtxt32bpp-make.out" 2>&1
 ldconfig
 ls -l /usr/lib/libtuxtxt32bpp.so.*
 
-echo "env OK: E2 build deps + libdvbsi++ + libtuxtxt + libtuxtxt32bpp installed"
+echo "env OK: E2 build deps + upstream DVB UAPI + libdvbsi++ + libtuxtxt + libtuxtxt32bpp installed"
