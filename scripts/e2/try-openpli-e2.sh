@@ -2,10 +2,10 @@
 # Trial-run the OpenPLi Enigma2 artifact on a box that ALREADY runs another E2
 # (e.g. OpenATV) without replacing it. Run this ON THE BOX as root.
 #
-#   ./try-openpli-e2.sh prepare [e2-arm64.tar.gz]   # extract to /opt, isolate config, ldd preflight
-#   ./try-openpli-e2.sh run --stop-current-e2       # pause the other E2, run OpenPLi in a mount namespace
-#   ./try-openpli-e2.sh restore                    # bring the other E2 back
-#   ./try-openpli-e2.sh clean                      # remove everything this script created
+#   bash try-openpli-e2.sh prepare [e2-arm64.tar.gz]  # extract to /opt, isolate config, ldd preflight
+#   bash try-openpli-e2.sh run --stop-current-e2      # pause the other E2, run OpenPLi in a mount namespace
+#   bash try-openpli-e2.sh restore                   # bring the other E2 back
+#   bash try-openpli-e2.sh clean                     # remove everything this script created
 #
 # Why this works (verified against OpenPLi/enigma2 scarthgap source):
 #   lib/base/eenv.cpp.in  eEnv::initialize() does setenv(prefix|datadir|sysconfdir|

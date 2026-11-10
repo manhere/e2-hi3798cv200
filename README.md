@@ -92,10 +92,10 @@ externally pre-set `prefix/datadir/sysconfdir/libdir` win). Hardcoded
 No systemd unit, no autostart change, no writes to the other image's config.
 
 ```bash
-./try-openpli-e2.sh prepare e2-arm64.tar.gz     # extract + isolate config + ldd preflight
-./try-openpli-e2.sh run --stop-current-e2       # pause the other GUI, run OpenPLi
-./try-openpli-e2.sh restore                    # bring the original GUI back
-./try-openpli-e2.sh clean                       # remove /opt/openpli-e2
+bash try-openpli-e2.sh prepare e2-arm64.tar.gz    # extract + isolate config + ldd preflight
+bash try-openpli-e2.sh run --stop-current-e2      # pause the other GUI, run OpenPLi
+bash try-openpli-e2.sh restore                   # bring the original GUI back
+bash try-openpli-e2.sh clean                      # remove /opt/openpli-e2
 ```
 
 Only one E2 can own `/dev/fb0` (single DRM master), so the current GUI must be
