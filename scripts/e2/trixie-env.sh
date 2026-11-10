@@ -1,15 +1,18 @@
 #!/bin/bash
-# Debian 12 (bookworm) arm64 build environment for the Enigma2 port.
+# Debian 13 (trixie) arm64 build environment for the Enigma2 port.
 # Phase 1 goal: build OpenPLi enigma2 (scarthgap) natively, generic fbdev path
 # (--with-boxtype=none --with-fbdev=/dev/fb0 --with-alsa), NO vendor HAVE_HISILICON.
 #
-# bookworm gaps:
+# The box is trixie: python 3.13, gcc 14, autoconf 2.72, swig 4.3. Building here
+# (instead of bookworm) is what makes the artifact link libpython3.13.so.1.0.
+#
+# Debian gaps:
 #   - libdvbsi++ was dropped from Debian -> built from source (tuxbox-neutrino/libdvbsi)
 #     into /usr of the container; the runtime .so ships inside the enigma2 tarball.
-#   - linux-libc-dev is 6.1, while the box runs the HiSTB 6.12.115 kernel:
-#     its linux/dvb/frontend.h predates SYS_DVBC2 (mainline since v6.2) and its
-#     DVB API minor is older. Install the DVB UAPI headers from the EXACT upstream
-#     kernel commit below so E2/tuxtxt see the same API as the running kernel.
+#   - trixie's linux-libc-dev (6.12.115) already has DVB API 5.12 + SYS_DVBC2, but
+#     we still install the DVB UAPI headers from the EXACT upstream kernel commit
+#     below so the binary always matches the flashed kernel + module tree, not
+#     whatever libc-dev revision the container happens to pull.
 set -euo pipefail
 
 WORK="${WORK:?set WORK to the env build dir}"
@@ -18,7 +21,7 @@ cd "$WORK"
 
 export DEBIAN_FRONTEND=noninteractive
 
-# --- 1. build deps (all verified present in bookworm arm64) -------------------------------
+# --- 1. build deps (package names verified against trixie arm64 apt) ----------------------
 # Hard requirements from enigma2 configure.ac: tuxbox-tuxtxt (built below), avahi-client,
 # jpeg, gif/ungif, alsa (--with-alsa), crypt, dl/rt (libc).
 apt-get update -qq
@@ -78,7 +81,7 @@ if grep -qE '__user|__force|__iomem|<linux/compiler' "$UAPI_DIR"/*.h; then
 fi
 echo "DVB UAPI from $KERNEL_REPO@$KERNEL_REF: $(grep DVB_API_VERSION_MINOR "$UAPI_DIR/version.h")"
 
-# --- 2. libdvbsi++ (E2 DVB SI parser; not packaged in bookworm) ----------------------------
+# --- 2. libdvbsi++ (E2 DVB SI parser; not packaged in Debian) -----------------------------
 DVBSI_REPO='https://github.com/tuxbox-neutrino/libdvbsi'
 DVBSI_COMMIT='8ed28affe3427640f222cdd96a471c2c817bc55f'  # master 2021-04-17
 if [ ! -d libdvbsi/.git ]; then

@@ -3,8 +3,12 @@
 Enigma2 (OpenPLi scarthgap) port for **Hi3798CV200** (HiMedia Q10 Pro class boxes,
 DVBIP-1002) running the mainline **6.12.115-dvbip** kernel
 ([HiSilicon-Development/linux-6.12.y](https://github.com/HiSilicon-Development/linux-6.12.y))
-on **Debian 12 (bookworm) arm64**. Everything is built by GitHub Actions
-(`ubuntu-24.04-arm` runner inside a `debian:bookworm` container) — nothing is built locally.
+on **Debian 13 (trixie) arm64**. Everything is built by GitHub Actions
+(`ubuntu-24.04-arm` runner inside a `debian:trixie` container) — nothing is built locally.
+
+> The box runs trixie / Python 3.13 / gcc 14. The artifact links
+> `libpython3.13.so.1.0` and therefore **only runs on Debian 13**; the earlier
+> bookworm artifact (`libpython3.11.so.1.0`) is not usable on this box.
 
 ## Upstream kernel baseline
 
@@ -18,15 +22,14 @@ All kernel facts below come from the pinned upstream commit, not from vendor BSP
 | Board defconfig | `arch/arm64/configs/hi3798cv200_defconfig` (+ `dvbip_1002_defconfig` fragment) |
 | Board DTS | `arch/arm64/boot/dts/hisilicon/hi3798cv200-dvbip-1002-arm64.dts` |
 
-`scripts/e2/bookworm-env.sh` installs the **DVB UAPI headers of that exact commit**
+`scripts/e2/trixie-env.sh` installs the **DVB UAPI headers of that exact commit**
 (`include/uapi/linux/dvb/*.h`, DVB API 5.12) into `/usr/local/include/linux/dvb`,
 applying the same sanitisation as the kernel's `scripts/headers_install.sh`
 (`__user`/`__force`/`__iomem`, `<linux/compiler.h>`, …) — raw in-tree UAPI headers
-are kernel-side sources and do not compile in userspace as-is.
-Debian bookworm's `linux-libc-dev` is 6.1 and predates `SYS_DVBC2` (mainline since
-v6.2), which is why the old build masked that switch case with `#ifdef`. The port now
-compiles against the same UAPI as the running kernel, so no masking is needed. Keep
-the pin in `bookworm-env.sh` in sync when the box kernel is updated.
+are kernel-side sources and do not compile in userspace as-is. trixie's own
+`linux-libc-dev` already ships API 5.12 + `SYS_DVBC2`, but pinning keeps the binary
+tied to the flashed kernel + module tree rather than to a container revision. Keep
+the pin in `trixie-env.sh` in sync when the box kernel is updated.
 
 ## Hardware/kernel facts (verified against the source above)
 
@@ -42,7 +45,7 @@ the pin in `bookworm-env.sh` in sync when the box kernel is updated.
 
 ## Port strategy
 
-Phase 1 (this repo, CI green = artifact `e2-arm64-bookworm`):
+Phase 1 (this repo, CI green = artifact `e2-arm64-trixie`):
 - OpenPLi/enigma2 `scarthgap` pinned `6a5eb2e2` (HEAD 2026-11-07), built with `--with-boxtype=none
   --with-fbdev=/dev/fb0 --with-alsa` — the **generic fbdev path**, no vendor
   `HAVE_HISILICON` code (that assumes vendor-kernel hifb/proc-stb/DVB-video0).
@@ -54,9 +57,9 @@ Phase 1 (this repo, CI green = artifact `e2-arm64-bookworm`):
     `smem_len`, and skip the non-existent vendor blit ioctl.
   - `gfbdc.cpp`: adopt the real framebuffer geometry as the render surface.
   - `dvb.cpp`: enumerate platform (non-USB) adapters 1..N, not just adapter0.
-- bookworm gap: libdvbsi++ not packaged → built from `tuxbox-neutrino/libdvbsi`
+- Debian gap: libdvbsi++ not packaged → built from `tuxbox-neutrino/libdvbsi`
   (pinned `8ed28aff`), runtime `.so` shipped inside the tarball.
-- Deliverable: `e2-arm64.tar.gz` (`usr/` layout) + `install-enigma2-arm64.sh` → UI boots on HDMI.
+- Deliverable: `e2-arm64.tar.gz` (`usr/` layout) + `install-enigma2-arm64.sh`.
 
 Phase 2: TV pipeline — DVB-C scanning works against the standard frontend API;
 playback decode needs a bridge (gst/ffmpeg with HiVXE v4l2m2m, or soft decode MVP).
@@ -68,11 +71,33 @@ Phase 3: `/proc/stb` shim kernel module, hw decode integration, OSCam/CA
 
 ## Usage (on the box)
 
+### Dedicated box (no other E2 installed)
+
 ```bash
-bash install-enigma2-arm64.sh install      # installs deps, extracts to /, creates `e2` launcher
-e2                                          # run from the local console (tty0)
+bash install-enigma2-arm64.sh install   # trixie deps + extract to / + openpli-e2 launcher
+openpli-e2                              # run from the local console (tty0)
 ```
 
-Note: the UI renders via the KMS fbdev emulation at software-blit speed; do not run
-while another DRM master (e.g. a GBM media player) holds the display. The launcher
-unbinds fbcon while E2 runs so the text console does not redraw over the OSD.
+The install script refuses to run when `/usr/share/enigma2` is a symlink (another
+E2 image owns it), and uses a unique `openpli-e2.service` that is **not** enabled
+automatically, so an existing autostart GUI is never replaced.
+
+### Shared box — test OpenPLi without disturbing the existing E2
+
+`scripts/e2/try-openpli-e2.sh` extracts into `/opt/openpli-e2` and redirects every
+path through `eEnv` (OpenPLi's `eEnv::initialize()` uses `setenv(..., 0)`, so
+externally pre-set `prefix/datadir/sysconfdir/libdir` win). Hardcoded
+`/etc/enigma2/*` paths are contained by a private `unshare -m` bind mount, and
+`/usr/lib/enigma.info` is installed with a backup and removed by `clean`.
+No systemd unit, no autostart change, no writes to the other image's config.
+
+```bash
+./try-openpli-e2.sh prepare e2-arm64.tar.gz     # extract + isolate config + ldd preflight
+./try-openpli-e2.sh run --stop-current-e2       # pause the other GUI, run OpenPLi
+./try-openpli-e2.sh restore                    # bring the original GUI back
+./try-openpli-e2.sh clean                       # remove /opt/openpli-e2
+```
+
+Only one E2 can own `/dev/fb0` (single DRM master), so the current GUI must be
+paused during the test; `restore` starts the original `e2.service` again. The UI
+renders via the KMS fbdev emulation at software-blit speed.

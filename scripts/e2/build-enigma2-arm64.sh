@@ -1,13 +1,14 @@
 #!/bin/bash
-# Build OpenPLi enigma2 (scarthgap) natively on Debian 12 (bookworm) arm64.
+# Build OpenPLi enigma2 (scarthgap) natively on Debian 13 (trixie) arm64.
 # Phase 1: generic fbdev path — boxtype=none, /dev/fb0 (histb-vdp generic DRM
 # fbdev emulation), ALSA audio, NO HAVE_HISILICON vendor-kernel code.
 # TV playback comes in Phase 2/3.
 #
-# The DVB UAPI headers used here come from the *same* upstream kernel that runs
-# on the box (HiSilicon-Development/linux-6.12.y @ 6.12.115), installed by
-# bookworm-env.sh into /usr/local/include/linux/dvb — not Debian bookworm's
-# 6.1 snapshot. All patches below are derived from that kernel's source.
+# trixie = python 3.13 / gcc 14; the artifact links libpython3.13.so.1.0 and
+# only runs on Debian 13. The DVB UAPI headers come from the *same* upstream
+# kernel that runs on the box (HiSilicon-Development/linux-6.12.y @ 6.12.115),
+# installed by trixie-env.sh into /usr/local/include/linux/dvb. All patches
+# below are derived from that kernel's source.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -34,18 +35,18 @@ echo "enigma2 commit: $ACTUAL"
 
 # SYS_DVBC2 is NOT a vendor extension: it is in the mainline UAPI since v6.2
 # (include/uapi/linux/dvb/frontend.h of the pinned 6.12.115 kernel, line 696).
-# Debian bookworm's linux-libc-dev is 6.1 and lacks it, which is why the old
-# build wrapped the getCapabilities() case in #ifdef. That guard silently made
-# E2 ignore DVB-C2 while the running kernel does expose it. We now build against
-# the pinned upstream UAPI headers, so no guard is needed. Fail fast if the env
-# step was skipped.
+# trixie's linux-libc-dev (6.12.115) has it too. The old bookworm build masked
+# the getCapabilities() case with #ifdef because bookworm's 6.1 headers lacked
+# it; that guard silently made E2 ignore DVB-C2 while the kernel exposes it.
+# We build against the pinned upstream UAPI headers, so no guard is needed.
+# Fail fast if the env step was skipped.
 UAPI=/usr/local/include/linux/dvb
-[ -f "$UAPI/frontend.h" ] || { echo "run bookworm-env.sh first (upstream DVB UAPI headers missing)"; exit 1; }
+[ -f "$UAPI/frontend.h" ] || { echo "run trixie-env.sh first (upstream DVB UAPI headers missing)"; exit 1; }
 grep -q 'SYS_DVBC2' "$UAPI/frontend.h" || { echo "$UAPI/frontend.h has no SYS_DVBC2"; exit 1; }
 echo "DVB UAPI: $(grep DVB_API_VERSION_MINOR "$UAPI/version.h")"
 
 # OpenPLi hard-codes -Werror (plus a long OE-tuned -Wno-error exclusion list) in
-# configure.ac. On a native bookworm toolchain upstream warnings like
+# configure.ac. On a native trixie toolchain (gcc 14) upstream warnings like
 # "ISO C++ forbids converting a string constant to 'char*'" (dvb/volume.cpp,
 # ALSA_CARD macro) become fatal, and more will follow. Strip -Werror entirely so
 # every diagnostic stays a warning.
@@ -296,8 +297,8 @@ PYEOF
 ./autogen.sh > "$WORK/autogen.out" 2>&1
 # OpenPLi's ax_python_devel.m4 is OE-cross-patched: with a native multiarch libdir
 # (/usr/lib/aarch64-linux-gnu) it mangles PYTHON_CPPFLAGS into
-# "-I/aarch64-linux-gnu/usr/include/python3.11" and the dev-env consistency check
-# fails ("Could not link test program to Python" -> Giving up).
+# "-I/aarch64-linux-gnu/usr/include/python3.13" (trixie) and the dev-env
+# consistency check fails ("Could not link test program to Python" -> Giving up).
 # The macro only derives flags when PYTHON_CPPFLAGS is empty, so pre-set it.
 export PYTHON_CPPFLAGS="-I$(python3 -c 'import sysconfig; print(sysconfig.get_path("include"))')"
 # same m4 hack also mangles the site-packages path into /aarch64-linux-gnu/usr/lib/...
@@ -363,7 +364,7 @@ echo "shipped tuxtxt font: $found_tuxtxt_font"
 # --- 5. verify + package --------------------------------------------------------------------
 BIN="$WORK/stage/usr/bin/enigma2"
 [ -x "$BIN" ] || { echo "enigma2 binary missing"; exit 1; }
-echo "== NEEDED -> bookworm packages" | tee "$WORK/runtime-deps.txt"
+echo "== NEEDED -> trixie packages" | tee "$WORK/runtime-deps.txt"
 ldd "$BIN" | tee -a "$WORK/runtime-deps.txt"
 ldd "$BIN" | grep 'not found' && { echo "MISSING libs above"; exit 1; } || echo "all libs resolved"
 file "$BIN" | tee -a "$WORK/runtime-deps.txt"

@@ -1,40 +1,46 @@
-# Build OpenPLi Enigma2 (scarthgap) for Debian 12 (bookworm) arm64 — the E2 port, Phase 1.
+# Build OpenPLi Enigma2 (scarthgap) for Debian 13 (trixie) arm64 — the E2 port, Phase 1.
+#
+# The box (dvbip-1002) runs Debian 13 trixie / Python 3.13 / gcc 14 on the
+# mainline 6.12.115-dvbip kernel. Building inside debian:trixie is mandatory:
+# the previous bookworm artifact linked libpython3.11.so.1.0, which does not
+# exist on the box.
 #
 # Goal: generic fbdev Enigma2 on the box — --with-boxtype=none, /dev/fb0 comes from the
-# histb-vdp KMS fbdev emulation, ALSA audio, evdev remote. NO vendor HAVE_HISILICON
-# code (that path assumes vendor-kernel hifb/proc-stb/DVB-video0, none of which exist
-# on the mainline 6.12 kernel).
+# histb-vdp generic DRM fbdev emulation, ALSA audio, evdev remote. NO vendor
+# HAVE_HISILICON code (that path assumes vendor-kernel hifb/proc-stb/DVB-video0,
+# none of which exist on the mainline kernel).
 #
 # DVB status on the box: 4x MaxLinear MxL214 DVB-C frontends via histb-dmx (one
 # adapter per TS input, adapters 0-3, ca0..ca3 aliases on each) — usable by E2's
 # DVB layer as-is. TV *playback* (decode) is Phase 2/3: the kernel exposes V4L2 m2m
 # (histb-vdec), not a DVB video0 device.
 #
-# bookworm gaps: libdvbsi++ dropped from Debian -> built from tuxbox-neutrino/libdvbsi;
-# linux-libc-dev 6.1 DVB UAPI is stale -> the pinned upstream 6.12.115 UAPI headers
-# are installed by scripts/e2/bookworm-env.sh and used by E2 + tuxtxt.
-name: e2-arm64-bookworm
+# Debian gaps: libdvbsi++ is not packaged -> built from tuxbox-neutrino/libdvbsi.
+# trixie's linux-libc-dev already ships DVB API 5.12 / SYS_DVBC2, but the build
+# still pins the exact upstream 6.12.115 UAPI headers (scripts/e2/trixie-env.sh)
+# so the binary always matches the flashed kernel + module tree.
+name: e2-arm64-trixie
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - '.github/workflows/e2-arm64-bookworm.yml'
+      - '.github/workflows/e2-arm64-trixie.yml'
       - 'scripts/e2/**'
 
 permissions:
   contents: read
 
 concurrency:
-  group: e2-arm64-bookworm
+  group: e2-arm64-trixie
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Enigma2 (OpenPLi scarthgap, arm64, Debian 12)
+    name: Enigma2 (OpenPLi scarthgap, arm64, Debian 13)
     runs-on: ubuntu-24.04-arm
-    container: debian:bookworm
+    container: debian:trixie
     timeout-minutes: 120
     env:
       JOBS: '4'
@@ -46,10 +52,10 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Build environment (bookworm deps, libdvbsi++)
+      - name: Build environment (trixie deps, libdvbsi++)
         env:
           WORK: ${{ github.workspace }}/build/env
-        run: bash scripts/e2/bookworm-env.sh
+        run: bash scripts/e2/trixie-env.sh
 
       - name: Build Enigma2 (OpenPLi scarthgap, native arm64)
         env:
@@ -59,7 +65,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: e2-arm64-bookworm
+          name: e2-arm64-trixie
           if-no-files-found: error
           path: |
             build/e2/e2-arm64.tar.gz
@@ -70,7 +76,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2-arm64-bookworm-logs
+          name: e2-arm64-trixie-logs
           if-no-files-found: ignore
           path: |
             build/env/*.out
