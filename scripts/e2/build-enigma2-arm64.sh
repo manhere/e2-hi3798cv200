@@ -853,6 +853,28 @@ new = '''\t\tif os.path.exists("/proc/stb/video/videomode_50hz"):
 assert s.count(old) == 1, 'setMode anchor not found'
 s = s.replace(old, new)
 
+old = '''		print("[VideoHardware] -> setting aspect, policy, policy2, wss", aspect, policy, policy2, wss)
+		open("/proc/stb/video/aspect", "w").write(aspect)
+		open("/proc/stb/video/policy", "w").write(policy)
+		try:
+			open("/proc/stb/denc/0/wss", "w").write(wss)
+		except IOError:
+			pass
+'''
+new = '''		print("[VideoHardware] -> setting aspect, policy, policy2, wss", aspect, policy, policy2, wss)
+		try:
+			open("/proc/stb/video/aspect", "w").write(aspect)
+			open("/proc/stb/video/policy", "w").write(policy)
+		except IOError:
+			pass  # no vendor procfs: aspect/policy are KMS/fixed on this box
+		try:
+			open("/proc/stb/denc/0/wss", "w").write(wss)
+		except IOError:
+			pass
+'''
+assert s.count(old) == 1, 'updateAspect anchor not found'
+s = s.replace(old, new)
+
 open(p, 'w', encoding='utf-8', newline='\n').write(s)
 print('patched VideoHardware.py (KMS/EDID mode fallback via HistbVideoModes)')
 PYEOF
