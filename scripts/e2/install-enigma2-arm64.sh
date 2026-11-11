@@ -37,6 +37,7 @@ install)
   # names no longer exist on Debian 13.
   apt-get install -y --no-install-recommends \
     python3 python3-twisted python3-pil python3-netifaces \
+    python3-cheetah python3-openssl \
     libfreetype6 libfribidi0 libpng16-16t64 libxml2 libsigc++-3.0-0 \
     libssl3t64 libasound2t64 libgcc-s1 libstdc++6 libcrypt1 libgomp1 libdvbcsa1 \
     libavahi-client3 libjpeg62-turbo libgif7 libglib2.0-0t64 \
@@ -48,12 +49,11 @@ install)
 
   tar -C / -xzf "$T"
 
-  # E2-DarkOS / PLi-HD skins are separate OE packages, not shipped by enigma2's
-  # make install. Use the generated 1920x1080 skin_fhd (scaled clone of
-  # skin_default) so the OSD fills the native fbdev resolution.
+  # The tarball ships littlesat/skin-PLiHD's native 1920x1080 PLi-FullHD skin.
+  # Point the default at it so the OSD fills the native fbdev resolution.
   if [ ! -f /usr/etc/enigma2/settings ]; then
     mkdir -p /usr/etc/enigma2
-    echo 'config.skin.primary_skin=skin_fhd/skin.xml' > /usr/etc/enigma2/settings
+    echo 'config.skin.primary_skin=PLi-FullHD/skin.xml' > /usr/etc/enigma2/settings
   fi
 
   # /proc/stb does not exist on the mainline kernel — E2 logs harmless errors for

@@ -79,16 +79,11 @@ prepare)
   tar -C "$ROOT" -xzf "$T"
   [ -x "$P/bin/enigma2" ] || { echo "enigma2 binary missing in tarball"; exit 1; }
 
-  # Clone the in-tree 720x576 skin_default into a 1920x1080 skin_fhd. The same
-  # generator is used by the build, so newer artifacts already contain it;
-  # regenerate here to keep older artifacts usable as well.
-  GEN="$(dirname "$0")/make-fhd-skin.py"
-  if [ -f "$GEN" ]; then
-    python3 "$GEN" "$P/share/enigma2" skin_fhd || exit 1
-  elif [ ! -f "$P/share/enigma2/skin_fhd/skin.xml" ]; then
-    echo "ERROR: make-fhd-skin.py missing and no prebuilt skin_fhd in tarball"
-    exit 1
-  fi
+  # The artifact ships littlesat/skin-PLiHD's native 1920x1080 PLi-FullHD.
+  # Remove any skin_fhd left over from an earlier experimental build.
+  rm -rf "$P/share/enigma2/skin_fhd"
+  [ -f "$P/share/enigma2/PLi-FullHD/skin.xml" ] || {
+    echo "ERROR: PLi-FullHD skin missing from artifact"; exit 1; }
 
   # Seed the private /etc/enigma2 with read-only transponder data so a DVB-C
   # scan works. Nothing is written back into the other image's config dir.
@@ -98,15 +93,15 @@ prepare)
     fi
   done
   # Our own settings live under ${sysconfdir}/enigma2 (not /etc/enigma2).
-  # Point at the generated FHD skin: /dev/fb0 is 1920x1080, while the in-tree
-  # skin_default is 720x576 and would only fill the top-left corner.
+  # Use the shipped native 1920x1080 PLi-FullHD skin (in-tree skin_default is
+  # only 720x576 and would fill just the top-left corner).
   if [ ! -f "$P/etc/enigma2/settings" ]; then
-    echo 'config.skin.primary_skin=skin_fhd/skin.xml' > "$P/etc/enigma2/settings"
+    echo 'config.skin.primary_skin=PLi-FullHD/skin.xml' > "$P/etc/enigma2/settings"
   elif grep -q '^config.skin.primary_skin=' "$P/etc/enigma2/settings"; then
-    sed -i 's#^config.skin.primary_skin=.*#config.skin.primary_skin=skin_fhd/skin.xml#' \
+    sed -i 's#^config.skin.primary_skin=.*#config.skin.primary_skin=PLi-FullHD/skin.xml#' \
       "$P/etc/enigma2/settings"
   else
-    echo 'config.skin.primary_skin=skin_fhd/skin.xml' >> "$P/etc/enigma2/settings"
+    echo 'config.skin.primary_skin=PLi-FullHD/skin.xml' >> "$P/etc/enigma2/settings"
   fi
   # UsageConfig defaults config.ntp.timesync to "auto", whose notifier runs
   # `/etc/init.d/chronyd status` + `update-rc.d chronyd enable 3` on the HOST.
@@ -156,6 +151,21 @@ prepare)
     echo "installed netifaces into the trial tree"
   fi
 
+  # OpenWebif renders Cheetah templates at runtime. Prefer the system module;
+  # if absent, extract python3-cheetah into the trial tree (no apt install).
+  if ! PYTHONPATH="$ROOT/python" python3 -c 'import Cheetah' >/dev/null 2>&1; then
+    if ! ls "$ROOT/deb"/python3-cheetah*.deb >/dev/null 2>&1; then
+      (cd "$ROOT/deb" && apt-get download python3-cheetah >/dev/null 2>&1) || {
+        echo "ERROR: cannot fetch python3-cheetah deb"; exit 1; }
+    fi
+    for deb in "$ROOT/deb"/python3-cheetah*.deb; do
+      dpkg-deb -x "$deb" "$ROOT/deb/root" || exit 1
+    done
+    cp -a "$ROOT/deb/root/usr/lib/python3/dist-packages/Cheetah" "$ROOT/python/" || {
+      echo "ERROR: Cheetah package not found in deb"; exit 1; }
+    echo "installed Cheetah into the trial tree"
+  fi
+
   # UsageConfig.NtpTimeSync.isUsable() runs `chronyc tracking` at startup and
   # only catches CalledProcessError; a missing binary raises FileNotFoundError
   # and kills E2 outright. Provide a harmless in-trial shim instead of
@@ -186,11 +196,11 @@ SHIM
 
   # skin.py derives DEFAULT_SKIN from BoxInfo ("E2-DarkOS/skin.xml" or
   # "PLi-HD/skin.xml"); neither ships with enigma2, so it logs "Using emergency
-  # skin". Alias both names to the generated FHD skin (relative symlink, so
+  # skin". Alias both names to the shipped PLi-FullHD (relative symlink, so
   # all relative image/font references still resolve).
   for s in E2-DarkOS PLi-HD; do
-    if [ -d "$P/share/enigma2/skin_fhd" ]; then
-      ln -sfn skin_fhd "$P/share/enigma2/$s"
+    if [ -d "$P/share/enigma2/PLi-FullHD" ]; then
+      ln -sfn PLi-FullHD "$P/share/enigma2/$s"
     fi
   done
 
@@ -223,10 +233,10 @@ SHIM
   done
   [ "$broken" = 0 ] || { echo "ERROR: skin fonts are dangling"; exit 1; }
   [ -x "$ROOT/bin/chronyc" ] && [ -x "$ROOT/bin/update-rc.d" ] || { echo "ERROR: trial shims missing"; exit 1; }
-  if ! PYTHONPATH="$ROOT/python" python3 -c 'import netifaces' >/dev/null 2>&1; then
-    echo "ERROR: netifaces module not importable in the trial tree"; exit 1
+  if ! PYTHONPATH="$ROOT/python" python3 -c 'import netifaces, Cheetah' >/dev/null 2>&1; then
+    echo "ERROR: netifaces/Cheetah not importable in the trial tree"; exit 1
   fi
-  echo "skin fonts OK, shims + netifaces present"
+  echo "skin fonts OK, shims + netifaces + Cheetah present"
   echo "prepared. Next: $0 run --stop-current-e2"
   ;;
 

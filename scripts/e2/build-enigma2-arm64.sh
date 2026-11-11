@@ -377,13 +377,45 @@ done
 [ -n "$found_tuxtxt_font" ] || { echo "tuxtxt.ttf not found in /usr/share/fonts*"; exit 1; }
 echo "shipped tuxtxt font: $found_tuxtxt_font"
 
-# --- 4b. FHD skin cloned from skin_default --------------------------------------------------
+# --- 4b. external OpenPLi FHD skin + OpenWebif (pinned upstream commits) --------------------
 # /dev/fb0 is the native 1920x1080 DRM fbdev framebuffer, but the in-tree
-# skin_default declares 720x576: its widgets only fill the top-left corner.
-# OpenPLi ships no FHD skin, and third-party FHD skins need converters that
-# are not available. Clone the in-tree skin and scale every geometry attribute
-# (see make-fhd-skin.py) so the OSD is full-screen out of the box.
-python3 "$HERE/make-fhd-skin.py" "$WORK/stage/usr/share/enigma2" skin_fhd
+# skin_default declares 720x576. Ship littlesat/skin-PLiHD's PLi-FullHD:
+# native 1920x1080, no custom converters/renderers, no absolute paths, and the
+# most-starred OpenPLi skin on GitHub. OpenWebif 2.4.1 uses only E2 APIs that
+# scarthgap exports (BoxInfo, isPluginInstalled, checkLogin, WHERE_SESSIONSTART)
+# and compiles its Cheetah templates at runtime, so no build-time compilation.
+SKIN_REPO='https://github.com/littlesat/skin-PLiHD'
+SKIN_COMMIT='220a1dca09308037dd11b6d1092e2d54261ee924'  # master 2026-11-10
+OWI_REPO='https://github.com/oe-alliance/OpenWebif'
+OWI_COMMIT='6c63ba0605dfb0c8f0486685b1947ba1cb4d8f5d'  # main 2026-11-10, 2.4.1
+
+clone_pin() {
+  local repo="$1" sha="$2" dir="$3"
+  if [ ! -d "$dir/.git" ]; then
+    git clone --no-checkout "$repo" "$dir"
+  fi
+  ( cd "$dir" && git fetch --depth 1 origin "$sha" && git checkout --quiet --detach "$sha" )
+}
+clone_pin "$SKIN_REPO" "$SKIN_COMMIT" "$WORK/src/skin-plihd"
+clone_pin "$OWI_REPO" "$OWI_COMMIT" "$WORK/src/openwebif"
+
+mkdir -p "$WORK/stage/usr/share/enigma2"
+rm -rf "$WORK/stage/usr/share/enigma2/PLi-FullHD"
+cp -a "$WORK/src/skin-plihd/usr/share/enigma2/PLi-FullHD" "$WORK/stage/usr/share/enigma2/"
+[ -f "$WORK/stage/usr/share/enigma2/PLi-FullHD/skin.xml" ] || { echo "PLi-FullHD skin missing"; exit 1; }
+grep -q 'yres="1080"' "$WORK/stage/usr/share/enigma2/PLi-FullHD/skin.xml" || \
+  { echo "PLi-FullHD is not 1080p"; exit 1; }
+echo "shipped PLi-FullHD skin ($(find "$WORK/stage/usr/share/enigma2/PLi-FullHD" -type f | wc -l) files)"
+
+# setup.py build compiles the .po catalogs into plugin/locale (optional).
+( cd "$WORK/src/openwebif" && python3 setup.py build > "$WORK/openwebif-build.out" 2>&1 ) || \
+  echo "WARN: OpenWebif locale build failed (translations only)"
+mkdir -p "$WORK/stage/usr/lib/enigma2/python/Plugins/Extensions"
+rm -rf "$WORK/stage/usr/lib/enigma2/python/Plugins/Extensions/OpenWebif"
+cp -a "$WORK/src/openwebif/plugin" "$WORK/stage/usr/lib/enigma2/python/Plugins/Extensions/OpenWebif"
+[ -f "$WORK/stage/usr/lib/enigma2/python/Plugins/Extensions/OpenWebif/plugin.py" ] || \
+  { echo "OpenWebif plugin missing"; exit 1; }
+echo "shipped OpenWebif plugin"
 
 # --- 5. verify + package --------------------------------------------------------------------
 BIN="$WORK/stage/usr/bin/enigma2"

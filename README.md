@@ -60,11 +60,16 @@ Phase 1 (this repo, CI green = artifact `e2-arm64-trixie`):
 - Debian gap: libdvbsi++ not packaged → built from `tuxbox-neutrino/libdvbsi`
   (pinned `8ed28aff`), runtime `.so` shipped inside the tarball.
 - FHD skin: OpenPLi ships only the 720×576 `skin_default`; `/dev/fb0` is the
-  native **1920×1080** DRM framebuffer. `scripts/e2/make-fhd-skin.py` clones
-  `skin_default` into `skin_fhd` and scales position/size/font/offset attributes
-  by x=1920/720, y=1080/576, preserving symbolic geometry (`center`, `c+5`,
-  `e-45`, `10%`, `2h`) and all element text. The skin is generated at build
-  time and is the default `config.skin.primary_skin`.
+  native **1920×1080** DRM framebuffer. The build pins
+  [littlesat/skin-PLiHD](https://github.com/littlesat/skin-PLiHD)
+  (`220a1dca`, the most-starred OpenPLi skin) and ships its `PLi-FullHD`
+  skin: native 1920×1080, zero custom converters/renderers, no absolute paths,
+  289 self-contained files. It is the default `config.skin.primary_skin`.
+- OpenWebif: pinned [oe-alliance/OpenWebif](https://github.com/oe-alliance/OpenWebif)
+  (`6c63ba06`, 2.4.1) is installed into
+  `usr/lib/enigma2/python/Plugins/Extensions/OpenWebif`. Its E2 APIs all exist
+  in scarthgap, Cheetah templates are compiled at runtime, and the plugin
+  self-starts via `WHERE_SESSIONSTART` (HTTP on the box's web port).
 - Deliverable: `e2-arm64.tar.gz` (`usr/` layout) + `install-enigma2-arm64.sh`.
 
 Phase 2: TV pipeline — DVB-C scanning works against the standard frontend API;
