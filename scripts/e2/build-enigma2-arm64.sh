@@ -918,13 +918,13 @@ done
 # no checksum= line -> content check skipped (only a notice is printed).
 mkdir -p "$WORK/stage/usr/lib"
 cat > "$WORK/stage/usr/lib/enigma.info" <<'EOF'
-brand=HiMedia
+brand=DVBIP-1002
 machinebuild=hi3798cv200
-machine=himedia-q10-pro
-model=himedia-q10-pro
+machine=dvbip-1002
+model=dvbip-1002
 architecture=arm
-displaybrand=HiMedia
-displaymodel=HiMedia Q10 Pro
+displaybrand=DVBIP-1002
+displaymodel=DVBIP-1002
 displaydistro=OpenPLi
 imagetype=release
 imageversion='1.0'

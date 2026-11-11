@@ -1,7 +1,7 @@
 # e2-hi3798cv200
 
-Enigma2 (OpenPLi scarthgap) port for **Hi3798CV200** (HiMedia Q10 Pro class boxes,
-DVBIP-1002) running the mainline **6.12.115-dvbip** kernel
+Enigma2 (OpenPLi scarthgap) port for **Hi3798CV200** (DVBIP-1002 box)
+running the mainline **6.12.115-dvbip** kernel
 ([HiSilicon-Development/linux-6.12.y](https://github.com/HiSilicon-Development/linux-6.12.y))
 on **Debian 13 (trixie) arm64**. Everything is built by GitHub Actions
 (`ubuntu-24.04-arm` runner inside a `debian:trixie` container) — nothing is built locally.
