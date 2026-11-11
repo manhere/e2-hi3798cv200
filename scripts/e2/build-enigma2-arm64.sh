@@ -1,8 +1,13 @@
 #!/bin/bash
 # Build OpenPLi enigma2 (scarthgap) natively on Debian 13 (trixie) arm64.
-# Phase 1: generic fbdev path — boxtype=none, /dev/fb0 (histb-vdp generic DRM
-# fbdev emulation), ALSA audio, NO HAVE_HISILICON vendor-kernel code.
-# TV playback comes in Phase 2/3.
+# boxtype=none, /dev/fb0 (histb-vdp generic DRM fbdev emulation), ALSA audio.
+# TV playback: HAVE_HISTB software decoder backend (ported from
+# manhere/enigma2-hi3798cv200) — demux TS tap -> user-space PES demux ->
+# dlopen'ed hivxe-ffmpeg (v4l2request hwaccel: MPEG1/2, H264, HEVC, AVS/AVS+)
+# -> DRM_PRIME dmabuf -> histb-vdp DRM overlay plane; audio avcodec -> ALSA.
+# The runtime hivxe-ffmpeg libs are NOT shipped in this tarball: they already
+# live on the box at /usr/local/lib/hivxe-ffmpeg (avcodec 63.1.101); the
+# backend dlopens them and degrades to "no decoder" when absent.
 #
 # trixie = python 3.13 / gcc 14; the artifact links libpython3.13.so.1.0 and
 # only runs on Debian 13. The DVB UAPI headers come from the *same* upstream
@@ -335,12 +340,20 @@ PYEOF
 
 # --- 1b. ported fixes from manhere/enigma2-hi3798cv200 (.ci/patches) -------------------------
 # These are OpenATV-tree patches; each is re-anchored to OpenPLi scarthgap and
-# only the parts that apply to our UI-only (Phase 1) port are taken. Skipped:
-#   * 020-fb-setmode-fallback   -> superseded by our fb.cpp DRM-fbdev rework
-#   * 200-decoder-histb-backend -> OpenATV HAVE_HISTB decode backend; NOT
-#                                  mechanically portable to OpenPLi's decoder layer
-# Applied: 140 (decode demux), 110 (FrontendInfo crash), 080 (NIM enumeration
-# fallback), 210 (lamedb frequency-0 guard).
+# only the parts that apply to our tree are taken. Applied: 140 (decode demux),
+# 110 (FrontendInfo crash), 080 (NIM enumeration fallback), 210 (lamedb
+# frequency-0 guard), 200 (HAVE_HISTB decoder backend, blocks 1c/1d below).
+# Skipped (verified against the pinned OpenPLi scarthgap source):
+#   * 020-fb-setmode-fallback    -> superseded by our fb.cpp DRM-fbdev rework
+#   * 030-avswitch-getmodelist   -> OpenPLi AVSwitch.py has no getModeList()
+#   * 040-avcontrol-videomode    -> OpenPLi has no lib/driver/avcontrol.cpp
+#   * 050/070 UTF-8 hardening    -> OpenPLi Directories.py already UTF-8 aware
+#   * 090/100 opkg screens       -> Information.py absent, SoftwareUpdate has
+#                                   no fetchedList path in OpenPLi
+#   * 130-dangling-bouquet       -> OpenPLi loadBouquet() is structured
+#                                   differently (no operator[] early-return)
+#   * 220 maintained patches     -> OpenATV packaging/patches chain, n/a
+#   * 300 proc-stb redirect      -> OpenPLi does not use /proc/stb
 
 python3 - <<'PYEOF'
 # (7a) lib/dvb/demux.cpp: DMX_SET_SOURCE fallback (live-decode blocker fix).
@@ -598,6 +611,207 @@ open(p, 'w', encoding='utf-8', newline='\n').write(s)
 print('patched db.cpp (frequency-0 transponder guards)')
 PYEOF
 
+python3 - <<'PYEOF'
+# --- 1c. lib/dvb/scan.cpp: recognise AVS (0x42) / AVS+ (0x43) video ----------
+# Chinese cable/terrestrial PMTs carry AVS/AVS+ elementary streams. Stock
+# OpenPLi only recognises 0x01/0x02/0x10/0x1b/0x24/0xEA, so videopid stays
+# 0xFFFF and every AVS service is recorded without a video pid ("cannot
+# watch" even with a working decoder backend). Map both to
+# eDVBVideo::AVS (16): the histb backend decodes AVS and AVS+ through the
+# CAVS hwaccel (AV_CODEC_ID_CAVS); eDVBVideo::AVS2 (40) has no CV200 VDH
+# engine. scan.cpp does not include decoder.h, hence the literal.
+p = 'lib/dvb/scan.cpp'
+s = open(p, encoding='utf-8').read()
+old = (
+    '\t\t\t\tcase 0x24: // H265 HEVC\n'
+    '\t\t\t\t\tisvideo = 1;\n'
+    '\t\t\t\t\tforced_video = 1;\n'
+    '\t\t\t\t\tcurrentVideoType = 7;  // H265_HEVC\n'
+    '\t\t\t\t\tbreak;\n'
+)
+new = old + (
+    '\t\t\t\tcase 0x42: // AVS (China)\n'
+    '\t\t\t\tcase 0x43: // AVS+ (China, decoded via the CAVS engine)\n'
+    '\t\t\t\t\tisvideo = 1;\n'
+    '\t\t\t\t\tforced_video = 1;\n'
+    '\t\t\t\t\t/* eDVBVideo::AVS == 16 (decoder.h); scan.cpp does not include\n'
+    '\t\t\t\t\t * decoder.h, so use the literal. The histb decoder backend\n'
+    '\t\t\t\t\t * maps AVS to AV_CODEC_ID_CAVS (v4l2request hwaccel). */\n'
+    '\t\t\t\t\tcurrentVideoType = 16;\n'
+    '\t\t\t\t\tbreak;\n'
+)
+assert s.count(old) == 1, 'scan.cpp HEVC case anchor not found'
+s = s.replace(old, new, 1)
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched scan.cpp (AVS/AVS+ 0x42/0x43 video recognition)')
+PYEOF
+
+export E2_PKG_DIR="$HERE/packaging"
+
+python3 - <<'PYEOF'
+# --- 1d. HAVE_HISTB decoder backend (re-anchored 200 patch) -------------------
+# histb has no /dev/dvb/adapterN/{video,audio}0 nodes; the backend compiled in
+# when HAVE_HISTB replaces the classic eDVBAudio/eDVBVideo/eDVBPCR/eDVBTText
+# implementations with: demux TSDEMUX_TAP -> user-space TS/PES demux ->
+# dlopen("/usr/local/lib/hivxe-ffmpeg/libav*.so") avcodec (v4l2request
+# hwaccel) -> DRM_PRIME -> histb-vdp overlay plane; audio avcodec -> ALSA.
+# Reference: manhere/enigma2-hi3798cv200 packaging/decoder_histb_impl.h +
+# .ci/patches/200-decoder-histb-backend.py, re-anchored to OpenPLi scarthgap:
+#   * OpenPLi eDVBAudio pimpl is "int m_fd, m_fd_demux, m_dev, m_is_freezed;"
+#     (no m_bypass member like OpenATV)
+#   * OpenPLi VIDEO_STREAMTYPE_* defines are not wrapped in #endif, so the
+#     relocation cuts to the end of the AVS2 define line instead
+#   * the backend references four OpenATV-only members (m_debug x4 statics,
+#     m_bypass, m_streamtype, gamma/HDR tracking) which are stripped here
+import os
+import shutil
+
+pkg = os.environ['E2_PKG_DIR']
+os.makedirs('lib/driver/uapi/drm', exist_ok=True)
+for name in ('decoder_histb_impl.h', 'histb_video_capture_impl.h',
+             'histb_audio_control.h', 'histb_video_entry.h'):
+    shutil.copyfile(os.path.join(pkg, name), 'lib/dvb/' + name)
+shutil.copyfile(os.path.join(pkg, 'histb_drm.h'), 'lib/driver/histb_drm.h')
+shutil.copyfile(os.path.join(pkg, 'uapi', 'drm', 'histb_drm.h'),
+                'lib/driver/uapi/drm/histb_drm.h')
+print('histb backend headers installed (lib/dvb, lib/driver)')
+
+# (d1) strip OpenATV-only members from the backend implementation
+p = 'lib/dvb/decoder_histb_impl.h'
+s = open(p, encoding='utf-8').read()
+for cls in ('eDVBAudio', 'eDVBVideo', 'eDVBPCR', 'eDVBTText'):
+    line = 'int %s::m_debug = -1;\n' % cls
+    assert s.count(line) == 1, 'm_debug definition: ' + cls
+    s = s.replace(line, '', 1)
+old = 'm_is_freezed(0), m_bypass(-1)'
+assert s.count(old) == 1, 'eDVBAudio m_bypass initializer'
+s = s.replace(old, 'm_is_freezed(0)', 1)
+old = ', m_gamma(0), m_streamtype(-1)'
+assert s.count(old) == 1, 'eDVBVideo m_streamtype initializer'
+s = s.replace(old, ', m_gamma(0)', 1)
+for line in (
+    '\tm_hdr_detector = nullptr;\n',
+    '\tm_hdr_gamma = 0;\n',
+    '\tm_driver_gamma = 0;\n',
+    '\tm_hdr_gamma_authoritative = false;\n',
+    '\tm_gamma_from_driver_event = false;\n',
+):
+    assert s.count(line) == 1, 'gamma/HDR line: ' + repr(line)
+    s = s.replace(line, '', 1)
+old = '\tm_streamtype = type;\n'
+assert s.count(old) == 1, 'eDVBVideo startPid m_streamtype'
+s = s.replace(old, '', 1)
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('decoder_histb_impl.h adapted for OpenPLi class members')
+
+# (d2) decoder.h: add the histb pimpl pointer to the four leaf classes
+p = 'lib/dvb/decoder.h'
+s = open(p, encoding='utf-8').read()
+old = 'int m_fd, m_fd_demux, m_dev, m_is_freezed;'   # eDVBAudio (no m_bypass here)
+assert s.count(old) == 1, 'decoder.h eDVBAudio pimpl anchor'
+s = s.replace(old, old + '\n\tvoid *m_histb = nullptr;', 1)
+old = 'int m_fd, m_fd_demux, m_dev;'                   # eDVBVideo
+assert s.count(old) == 1, 'decoder.h eDVBVideo pimpl anchor'
+s = s.replace(old, old + '\n\tvoid *m_histb = nullptr;', 1)
+old = 'int m_fd_demux, m_dev;'                         # eDVBPCR + eDVBTText
+assert s.count(old) == 2, 'decoder.h eDVBPCR/eDVBTText pimpl anchors'
+s = s.replace(old, old + '\n\tvoid *m_histb = nullptr;')
+assert s.count('void *m_histb = nullptr;') == 4, 'decoder.h m_histb count'
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched decoder.h (m_histb pimpl members)')
+
+# (d3) decoder.cpp: exclude the classic implementations behind HAVE_HISTB and
+# include the backend instead; eTSMPEGDecoder (the orchestrator) stays.
+p = 'lib/dvb/decoder.cpp'
+s = open(p, encoding='utf-8').read()
+old = 'DEFINE_REF(eDVBAudio);'
+assert s.count(old) == 1, 'decoder.cpp DEFINE_REF(eDVBAudio) anchor'
+s = s.replace(old,
+    '#ifdef HAVE_HISTB\n'
+    '#include <lib/dvb/decoder_histb_impl.h>\n'
+    '#else\n' + old, 1)
+old = 'DEFINE_REF(eTSMPEGDecoder);'
+assert s.count(old) == 1, 'decoder.cpp DEFINE_REF(eTSMPEGDecoder) anchor'
+s = s.replace(old,
+    '#endif /* HAVE_HISTB */\n\n' + old, 1)
+# The VIDEO_STREAMTYPE_* defines sit inside the now-excluded span but are
+# still used by the kept eTSMPEGDecoder code: relocate them above the
+# sandwich so both build paths see them. OpenPLi does not wrap them in
+# #endif (unlike OpenATV), so cut through the AVS2 define line.
+start_anchor = '// not finally values i think.. !!'
+assert s.count(start_anchor) == 1, 'streamtype comment anchor'
+i0 = s.index(start_anchor)
+j = s.index('#define VIDEO_STREAMTYPE_AVS2', i0)
+i1 = s.index('\n', j) + 1
+block = s[i0:i1]
+s = s[:i0] + s[i1:]
+sandwich = '#ifdef HAVE_HISTB\n#include <lib/dvb/decoder_histb_impl.h>'
+assert s.count(sandwich) == 1, 'histb include anchor'
+s = s.replace(sandwich, block + '\n' + sandwich, 1)
+# histb backend implements audio via ALSA; the box has no legacy DVB audio
+# device node, so m_has_audio stays false and setAudioPID() silently forces
+# apid=-1. Force it on.
+old = 'm_has_audio = !access(filename, W_OK);'
+assert s.count(old) == 1, 'm_has_audio anchor'
+s = s.replace(old,
+    old + '\n'
+    '#ifdef HAVE_HISTB\n'
+    '\t\tm_has_audio = true;\n'
+    '#endif', 1)
+depth = 0
+for line in s.split('\n'):
+    st = line.strip()
+    if st.startswith('#ifdef') or st.startswith('#ifndef') or st.startswith('#if '):
+        depth += 1
+    elif st.startswith('#endif'):
+        depth -= 1
+assert depth == 0, 'unbalanced ifdefs depth %d' % depth
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched decoder.cpp (HAVE_HISTB backend sandwich + streamtype relocation)')
+PYEOF
+
+# --- 1e. hivxe-ffmpeg compile-time headers -----------------------------------
+# The backend dlopens the runtime libs already installed on the box
+# (/usr/local/lib/hivxe-ffmpeg, avcodec 63.1.101) but compiles against the
+# headers of the same HiSilicon fork. Debian's libavcodec-dev cannot be used:
+# it lacks hwcontext_v4l2request.h and has a different ABI generation.
+FF_SRC="$WORK/src/ffmpeg-hivxe"
+FF_INC="$WORK/ff-include"
+if [ ! -f "$FF_SRC/libavcodec/avcodec.h" ]; then
+  git clone --depth 1 https://github.com/HiSilicon-Development/FFmpeg "$FF_SRC"
+fi
+mkdir -p "$FF_INC/libavcodec" "$FF_INC/libavutil" "$FF_INC/libswresample" "$FF_INC/libswscale"
+cp "$FF_SRC"/libavcodec/*.h "$FF_INC/libavcodec/"
+cp "$FF_SRC"/libavutil/*.h "$FF_INC/libavutil/"
+cp "$FF_SRC"/libswresample/*.h "$FF_INC/libswresample/"
+cp "$FF_SRC"/libswscale/*.h "$FF_INC/libswscale/"
+# configure-generated headers: fixed arm64 little-endian template
+cat > "$FF_INC/libavutil/avconfig.h" <<'EOF'
+#ifndef AVUTIL_AVCONFIG_H
+#define AVUTIL_AVCONFIG_H
+#define AV_HAVE_BIGENDIAN 0
+#define AV_HAVE_FAST_UNALIGNED 1
+#endif
+EOF
+cat > "$FF_INC/libavutil/ffversion.h" <<'EOF'
+#ifndef AVUTIL_FFVERSION_H
+#define AVUTIL_FFVERSION_H
+#define FFMPEG_VERSION "hivxe-63.1.101"
+#endif
+EOF
+[ -f "$FF_INC/libavutil/hwcontext_v4l2request.h" ] || \
+  { echo "hivxe-ffmpeg headers incomplete (no hwcontext_v4l2request.h)"; exit 1; }
+[ -f "$FF_INC/libavcodec/avcodec.h" ] || \
+  { echo "hivxe-ffmpeg headers incomplete (no avcodec.h)"; exit 1; }
+echo "hivxe-ffmpeg compile headers ready at $FF_INC"
+
+# libdrm is linked directly by the backend (xf86drmMode for the overlay plane)
+pkg-config --exists libdrm 2>/dev/null || \
+  { apt-get update -qq && apt-get install -y --no-install-recommends libdrm-dev; }
+{ [ -e /usr/include/libdrm/xf86drm.h ] || [ -e /usr/include/xf86drm.h ]; } || \
+  { echo "libdrm headers missing (libdrm-dev)"; exit 1; }
+echo "libdrm OK"
+
 # --- 2. configure (generic box, fbdev main display, alsa audio) -----------------------------
 ./autogen.sh > "$WORK/autogen.out" 2>&1
 # OpenPLi's ax_python_devel.m4 is OE-cross-patched: with a native multiarch libdir
@@ -609,6 +823,14 @@ export PYTHON_CPPFLAGS="-I$(python3 -c 'import sysconfig; print(sysconfig.get_pa
 # same m4 hack also mangles the site-packages path into /aarch64-linux-gnu/usr/lib/...
 # (would misplace E2's python files under DESTDIR staging) -> pre-set it as well.
 export PYTHON_SITE_PKG="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+# HAVE_HISTB: histb decoder backend (dlopen hivxe-ffmpeg, no hard link).
+# -I$FF_INC: HiSilicon FFmpeg fork headers (Debian libavcodec-dev lacks
+#   hwcontext_v4l2request.h and has a different ABI generation).
+# -I/usr/include/libdrm: xf86drm.h internally #include <drm.h>; Debian's
+#   libdrm-dev installs kernel DRM headers under /usr/include/libdrm/
+#   (not /usr/include/drm/).
+CPPFLAGS="-DHAVE_HISTB -I$FF_INC -I/usr/include/libdrm" \
+LIBS="-lasound -ldrm -ldl" \
 ./configure --prefix=/usr \
   --with-boxtype=none \
   --with-fbdev=/dev/fb0 \
@@ -620,6 +842,21 @@ grep -E "boxtype|alsa|fbdev" "$WORK/configure.out" | head -5 || true
 # --- 3. build + stage -----------------------------------------------------------------------
 make -j"$JOBS" > "$WORK/make.out" 2>&1 || { tail -60 "$WORK/make.out"; exit 1; }
 make install DESTDIR="$WORK/stage" >> "$WORK/make.out" 2>&1
+
+# DVB text fallback: this cable network carries raw GBK/GB2312 channel names
+# without DVB encoding descriptors, so OpenPLi's default "* ISO8859-1"
+# fallback garbles them into double-encoded mojibake. GB18030 (superset of
+# GB2312/GBK/CP936, natively supported by lib/base/encoding.cpp) is the
+# proven fix on this exact box: OpenATV ships /etc/enigma2/encoding.conf
+# containing exactly "* GB18030". Rewrite the shipped fallback.
+ENC="$WORK/stage/usr/share/enigma2/encoding.conf"
+if [ -f "$ENC" ]; then
+  sed -i 's/^\*[[:space:]]*ISO8859-1[[:space:]]*/*   GB18030/' "$ENC"
+  grep -q '^\*.*GB18030' "$ENC" || { echo "encoding.conf fallback rewrite failed"; exit 1; }
+else
+  printf '*   GB18030\n' > "$ENC"
+fi
+echo "encoding.conf: global DVB text fallback set to GB18030"
 
 # --- 4. ship libdvbsi++ + libtuxtxt runtime .so + fonts inside the tarball -------------------
 # autotools deps installed with --prefix=/usr land in /usr/lib (no multiarch), so probe

@@ -12,8 +12,10 @@
 #
 # DVB status on the box: 4x MaxLinear MxL214 DVB-C frontends via histb-dmx (one
 # adapter per TS input, adapters 0-3, ca0..ca3 aliases on each) — usable by E2's
-# DVB layer as-is. TV *playback* (decode) is Phase 2/3: the kernel exposes V4L2 m2m
-# (histb-vdec), not a DVB video0 device.
+# DVB layer as-is. TV playback: HAVE_HISTB software decoder backend compiled
+# into decoder.cpp (ported from manhere/enigma2-hi3798cv200) — demux TS tap ->
+# dlopen'ed hivxe-ffmpeg (/usr/local/lib/hivxe-ffmpeg on the box) -> DRM
+# overlay plane; audio via ALSA. The tarball does NOT ship the runtime libs.
 #
 # Debian gaps: libdvbsi++ is not packaged -> built from tuxbox-neutrino/libdvbsi.
 # trixie's linux-libc-dev already ships DVB API 5.12 / SYS_DVBC2, but the build
