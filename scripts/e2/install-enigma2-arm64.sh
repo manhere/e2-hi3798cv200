@@ -49,11 +49,11 @@ install)
   tar -C / -xzf "$T"
 
   # E2-DarkOS / PLi-HD skins are separate OE packages, not shipped by enigma2's
-  # make install — point the default skin at the in-tree skin_default so startup
-  # doesn't attempt a missing E2-DarkOS skin every boot.
+  # make install. Use the generated 1920x1080 skin_fhd (scaled clone of
+  # skin_default) so the OSD fills the native fbdev resolution.
   if [ ! -f /usr/etc/enigma2/settings ]; then
     mkdir -p /usr/etc/enigma2
-    echo 'config.skin.primary_skin=skin_default/skin.xml' > /usr/etc/enigma2/settings
+    echo 'config.skin.primary_skin=skin_fhd/skin.xml' > /usr/etc/enigma2/settings
   fi
 
   # /proc/stb does not exist on the mainline kernel — E2 logs harmless errors for

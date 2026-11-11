@@ -377,6 +377,14 @@ done
 [ -n "$found_tuxtxt_font" ] || { echo "tuxtxt.ttf not found in /usr/share/fonts*"; exit 1; }
 echo "shipped tuxtxt font: $found_tuxtxt_font"
 
+# --- 4b. FHD skin cloned from skin_default --------------------------------------------------
+# /dev/fb0 is the native 1920x1080 DRM fbdev framebuffer, but the in-tree
+# skin_default declares 720x576: its widgets only fill the top-left corner.
+# OpenPLi ships no FHD skin, and third-party FHD skins need converters that
+# are not available. Clone the in-tree skin and scale every geometry attribute
+# (see make-fhd-skin.py) so the OSD is full-screen out of the box.
+python3 "$HERE/make-fhd-skin.py" "$WORK/stage/usr/share/enigma2" skin_fhd
+
 # --- 5. verify + package --------------------------------------------------------------------
 BIN="$WORK/stage/usr/bin/enigma2"
 [ -x "$BIN" ] || { echo "enigma2 binary missing"; exit 1; }

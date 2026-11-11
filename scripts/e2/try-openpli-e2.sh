@@ -79,6 +79,17 @@ prepare)
   tar -C "$ROOT" -xzf "$T"
   [ -x "$P/bin/enigma2" ] || { echo "enigma2 binary missing in tarball"; exit 1; }
 
+  # Clone the in-tree 720x576 skin_default into a 1920x1080 skin_fhd. The same
+  # generator is used by the build, so newer artifacts already contain it;
+  # regenerate here to keep older artifacts usable as well.
+  GEN="$(dirname "$0")/make-fhd-skin.py"
+  if [ -f "$GEN" ]; then
+    python3 "$GEN" "$P/share/enigma2" skin_fhd || exit 1
+  elif [ ! -f "$P/share/enigma2/skin_fhd/skin.xml" ]; then
+    echo "ERROR: make-fhd-skin.py missing and no prebuilt skin_fhd in tarball"
+    exit 1
+  fi
+
   # Seed the private /etc/enigma2 with read-only transponder data so a DVB-C
   # scan works. Nothing is written back into the other image's config dir.
   for f in cables.xml satellites.xml terrestrial.xml atsc.xml encoding.conf; do
@@ -87,8 +98,15 @@ prepare)
     fi
   done
   # Our own settings live under ${sysconfdir}/enigma2 (not /etc/enigma2).
+  # Point at the generated FHD skin: /dev/fb0 is 1920x1080, while the in-tree
+  # skin_default is 720x576 and would only fill the top-left corner.
   if [ ! -f "$P/etc/enigma2/settings" ]; then
-    echo 'config.skin.primary_skin=skin_default/skin.xml' > "$P/etc/enigma2/settings"
+    echo 'config.skin.primary_skin=skin_fhd/skin.xml' > "$P/etc/enigma2/settings"
+  elif grep -q '^config.skin.primary_skin=' "$P/etc/enigma2/settings"; then
+    sed -i 's#^config.skin.primary_skin=.*#config.skin.primary_skin=skin_fhd/skin.xml#' \
+      "$P/etc/enigma2/settings"
+  else
+    echo 'config.skin.primary_skin=skin_fhd/skin.xml' >> "$P/etc/enigma2/settings"
   fi
   # UsageConfig defaults config.ntp.timesync to "auto", whose notifier runs
   # `/etc/init.d/chronyd status` + `update-rc.d chronyd enable 3` on the HOST.
@@ -168,11 +186,11 @@ SHIM
 
   # skin.py derives DEFAULT_SKIN from BoxInfo ("E2-DarkOS/skin.xml" or
   # "PLi-HD/skin.xml"); neither ships with enigma2, so it logs "Using emergency
-  # skin". Alias both names to the in-tree skin_default (relative symlink, so
+  # skin". Alias both names to the generated FHD skin (relative symlink, so
   # all relative image/font references still resolve).
   for s in E2-DarkOS PLi-HD; do
-    if [ -d "$P/share/enigma2/skin_default" ] && [ ! -e "$P/share/enigma2/$s" ]; then
-      ln -sfn skin_default "$P/share/enigma2/$s"
+    if [ -d "$P/share/enigma2/skin_fhd" ]; then
+      ln -sfn skin_fhd "$P/share/enigma2/$s"
     fi
   done
 

@@ -59,6 +59,12 @@ Phase 1 (this repo, CI green = artifact `e2-arm64-trixie`):
   - `dvb.cpp`: enumerate platform (non-USB) adapters 1..N, not just adapter0.
 - Debian gap: libdvbsi++ not packaged → built from `tuxbox-neutrino/libdvbsi`
   (pinned `8ed28aff`), runtime `.so` shipped inside the tarball.
+- FHD skin: OpenPLi ships only the 720×576 `skin_default`; `/dev/fb0` is the
+  native **1920×1080** DRM framebuffer. `scripts/e2/make-fhd-skin.py` clones
+  `skin_default` into `skin_fhd` and scales position/size/font/offset attributes
+  by x=1920/720, y=1080/576, preserving symbolic geometry (`center`, `c+5`,
+  `e-45`, `10%`, `2h`) and all element text. The skin is generated at build
+  time and is the default `config.skin.primary_skin`.
 - Deliverable: `e2-arm64.tar.gz` (`usr/` layout) + `install-enigma2-arm64.sh`.
 
 Phase 2: TV pipeline — DVB-C scanning works against the standard frontend API;
