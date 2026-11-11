@@ -927,9 +927,13 @@ displaybrand=HiMedia
 displaymodel=HiMedia Q10 Pro
 displaydistro=OpenPLi
 imagetype=release
-imageversion=1.0
-compiledate=20261111
+imageversion='1.0'
+compiledate='20261111'
+oe=openpli
 EOF
+# kernel value comes from the build host = the target kernel series the drivers
+# were built for; About screen shows it verbatim via getKernelVersionString().
+echo "kernel=$(uname -r)" >> "$WORK/stage/usr/lib/enigma.info"
 # append a valid checksum so BoxInfo reports "data loaded" instead of "checksum failed"
 # (an invalid checksum triggers the IncorrectBoxInfoWizard on every first boot).
 CS=$(md5sum "$WORK/stage/usr/lib/enigma.info" | cut -d' ' -f1)
