@@ -857,6 +857,208 @@ open(p, 'w', encoding='utf-8', newline='\n').write(s)
 print('patched VideoHardware.py (KMS/EDID mode fallback via HistbVideoModes)')
 PYEOF
 
+# --- 1g. maintained reference patches (0002/0004/0007/0009) re-anchored -------
+# From manhere/enigma2-hi3798cv200 packaging/patches (OpenATV-tree chain); only
+# these apply to the pinned OpenPLi scarthgap source:
+#   * 0007 volume/mute -> shared HDMI PCM gain (decoder infra installed by 1d)
+#   * 0002 remainder   -> gmaindc getResolution + skin.py real-geometry desktop
+#   * 0004             -> Harddisk.readFile UTF-8 hardening
+#   * 0009             -> HDMI hotplug recovery (HistbVideoHotplug, adapted to
+#                         VideoHardware + HistbVideoModes)
+# Skipped with reasons:
+#   * 0001 swig43      -> OpenPLi scarthgap already has the SWIG_VERSION >=
+#                         0x040300 branch (enigma_python.i:131)
+#   * 0003 wizard exit -> OpenPLi VideoWizard.py already has markDone()
+#   * 0005/0006/0008   -> 0005 fb.cpp logical canvas and 0006/0008 OpenATV/
+#                         Debian-specific frameworks need separate porting
+python3 - <<'PYEOF'
+# (g1) lib/dvb/volume.cpp: route volume and mute into the shared HDMI PCM gain
+# control (reference 0007, re-anchored). The backend plays raw S16 PCM directly
+# to the HDMI ALSA hw device, which exposes no playback mixer control: the
+# HAVE_ALSA snd_mixer path and the legacy DVB AUDIO_SET_MIXER ioctl are both
+# no-ops on DVBIP-1002, so the remote volume keys do nothing. The decoder
+# already applies per-sample gain (histbApplyPcmVolume) from the shared
+# HistbPcmControl state (lib/dvb/histb_audio_control.h, installed by 1d); feed
+# eDVBVolumecontrol into it. Mute lives in the shared control, so the HISTB
+# setVolume path does not need OpenPLi's "muted ? 0 : leftVol" mixing.
+p = 'lib/dvb/volume.cpp'
+s = open(p, encoding='utf-8').read()
+
+old = '#include <lib/dvb/volume.h>\n#include <stdio.h>\n'
+new = '#include <lib/dvb/volume.h>\n#ifdef HAVE_HISTB\n#include <lib/dvb/histb_audio_control.h>\n#endif\n#include <stdio.h>\n'
+assert s.count(old) == 1, 'volume.cpp include anchor not found'
+s = s.replace(old, new)
+
+old = '''\tleftVol = checkVolume(left);
+\trightVol = checkVolume(right);
+
+#ifdef HAVE_ALSA
+'''
+new = '''\tleftVol = checkVolume(left);
+\trightVol = checkVolume(right);
+
+#ifdef HAVE_HISTB
+\teDebug("[eDVBVolumecontrol] Setvolume: HISTB PCM leftVol=%d rightVol=%d", leftVol, rightVol);
+\thistbSetPcmVolume(leftVol, rightVol);
+#elif defined(HAVE_ALSA)
+'''
+assert s.count(old) == 1, 'volume.cpp setVolume anchor not found'
+s = s.replace(old, new)
+
+old = '''{
+#ifdef HAVE_ALSA
+\teDebug("[eDVBVolumecontrol] Setvolume: ALSA Mute");
+\tif (mainVolume)
+\t\tsnd_mixer_selem_set_playback_volume_all(mainVolume, 0);
+\tmuted = true;
+#else
+'''
+new = '''{
+#ifdef HAVE_HISTB
+\tmuted = true;
+\thistbSetPcmMute(true);
+#elif defined(HAVE_ALSA)
+\teDebug("[eDVBVolumecontrol] Setvolume: ALSA Mute");
+\tif (mainVolume)
+\t\tsnd_mixer_selem_set_playback_volume_all(mainVolume, 0);
+\tmuted = true;
+#else
+'''
+assert s.count(old) == 1, 'volume.cpp volumeMute anchor not found'
+s = s.replace(old, new)
+
+old = '''{
+#ifdef HAVE_ALSA
+\teDebug("[eDVBVolumecontrol] Setvolume: ALSA unMute to %d", leftVol);
+\tif (mainVolume)
+\t\tsnd_mixer_selem_set_playback_volume_all(mainVolume, leftVol);
+\tmuted = false;
+#else
+'''
+new = '''{
+#ifdef HAVE_HISTB
+\tmuted = false;
+\thistbSetPcmMute(false);
+#elif defined(HAVE_ALSA)
+\teDebug("[eDVBVolumecontrol] Setvolume: ALSA unMute to %d", leftVol);
+\tif (mainVolume)
+\t\tsnd_mixer_selem_set_playback_volume_all(mainVolume, leftVol);
+\tmuted = false;
+#else
+'''
+assert s.count(old) == 1, 'volume.cpp volumeUnMute anchor not found'
+s = s.replace(old, new)
+
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched volume.cpp (HISTB PCM volume/mute via histb_audio_control)')
+
+# (g2) lib/gdi/gmaindc.h + skin.py: adopt the real framebuffer geometry as the
+# desktop size (reference 0002, re-anchored to OpenPLi's skin output block).
+# Generic DRM fbdev emulation may retain the native mode after rejecting the
+# skin's resolution; describing the desktop with dimensions the driver does not
+# provide misplaces every widget. getSkinFactor() derives the element scale
+# from the desktop height, so skin coordinates follow the real geometry.
+p = 'lib/gdi/gmaindc.h'
+s = open(p, encoding='utf-8').read()
+old = '\tvirtual void setResolution(int xres, int yres, int bpp = 32) = 0;\n'
+new = '\tvirtual void setResolution(int xres, int yres, int bpp = 32) = 0;\n\teSize getResolution() { return size(); }\n'
+assert s.count(old) == 1, 'gmaindc.h setResolution anchor not found'
+s = s.replace(old, new)
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched gmaindc.h (getResolution accessor)')
+
+p = 'lib/python/skin.py'
+s = open(p, encoding='utf-8').read()
+old = '''\t\t\t\tfrom enigma import gMainDC
+\t\t\t\tgMainDC.getInstance().setResolution(xres, yres)
+\t\t\t\tdesktop.resize(eSize(xres, yres))
+'''
+new = '''\t\t\t\tfrom enigma import gMainDC
+\t\t\t\tgMainDC.getInstance().setResolution(xres, yres)
+\t\t\t\t# DRM fbdev emulation may retain the native mode after rejecting
+\t\t\t\t# the skin's resolution; adopt the real geometry so the desktop
+\t\t\t\t# never describes dimensions the driver does not provide
+\t\t\t\t# (reference 0002). getSkinFactor() rescales the skin elements.
+\t\t\t\ttry:
+\t\t\t\t\tdesktop.resize(gMainDC.getInstance().getResolution())
+\t\t\t\texcept AttributeError:
+\t\t\t\t\tdesktop.resize(eSize(xres, yres))
+'''
+assert s.count(old) == 1, 'skin.py resolution block anchor not found'
+s = s.replace(old, new)
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched skin.py (desktop adopts real fb geometry)')
+
+# (g3) Components/Harddisk.py: sysfs device labels can contain raw bytes;
+# decode them safely instead of crashing the UI at startup (reference 0004).
+p = 'lib/python/Components/Harddisk.py'
+s = open(p, encoding='utf-8').read()
+old = '''def readFile(filename):
+\tfile = open(filename)
+'''
+new = '''def readFile(filename):
+\t# sysfs/procfs device labels may contain raw bytes (reference 0004)
+\tfile = open(filename, encoding="utf-8", errors="replace")
+'''
+assert s.count(old) == 1, 'Harddisk readFile anchor not found'
+s = s.replace(old, new)
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched Harddisk.py (readFile UTF-8 hardening)')
+PYEOF
+
+cp "$E2_PKG_DIR/HistbVideoHotplug.py" lib/python/Plugins/SystemPlugins/Videomode/HistbVideoHotplug.py
+
+python3 - <<'PYEOF'
+# (g4) Videomode plugin: arm the DRM hotplug listener next to the stock
+# VideomodeHotplug (reference 0009, adapted to VideoHardware/HistbVideoModes).
+p = 'lib/python/Plugins/SystemPlugins/Videomode/plugin.py'
+s = open(p, encoding='utf-8').read()
+
+old = '''\tif reason == 0:
+\t\tstartHotplug()
+\telif reason == 1:
+\t\tstopHotplug()
+'''
+new = '''\tif reason == 0:
+\t\tstartHotplug()
+\t\tstartHistbHotplug()
+\telif reason == 1:
+\t\tstopHistbHotplug()
+\t\tstopHotplug()
+'''
+assert s.count(old) == 1, 'plugin.py autostart anchor not found'
+s = s.replace(old, new)
+
+old = 'def startHotplug():'
+new = '''histb_hotplug = None
+
+
+def startHistbHotplug():
+	global histb_hotplug
+	try:
+		from Plugins.SystemPlugins.Videomode.HistbVideoHotplug import HistbVideoHotplug
+	except ImportError as error:
+		print("[HistbVideoHotplug] unavailable: %s" % error)
+		return
+	histb_hotplug = HistbVideoHotplug(video_hw)
+	histb_hotplug.start()
+
+
+def stopHistbHotplug():
+	global histb_hotplug
+	if histb_hotplug is not None:
+		histb_hotplug.stop()
+		histb_hotplug = None
+
+
+def startHotplug():'''
+assert s.count(old) == 1, 'plugin.py startHotplug anchor not found'
+s = s.replace(old, new)
+
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched Videomode plugin.py (HistbVideoHotplug autostart)')
+PYEOF
+
 # --- 1e. hivxe-ffmpeg compile-time headers -----------------------------------
 # The backend dlopens the runtime libs already installed on the box
 # (/usr/local/lib/hivxe-ffmpeg, avcodec 63.1.101) but compiles against

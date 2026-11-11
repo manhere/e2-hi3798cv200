@@ -261,6 +261,28 @@ def _masterFd(lib, card):
 	return None, False
 
 
+def syncDesktop():
+	# DRM fbdev emulation follows the KMS mode: after a modeset the kernel
+	# resizes /dev/fb0 and the old surface geometry goes stale. Re-run
+	# gfbdc.setResolution (which adopts the real geometry via getMode) and
+	# resize the desktop to match; getSkinFactor() rescales skin elements
+	# (reference 0002/0005 behaviour).
+	try:
+		from enigma import gMainDC, getDesktop
+		desktop = getDesktop(0)  # GUI_SKIN_ID; .size() is a proven binding
+		dc = gMainDC.getInstance()
+		# the request itself is irrelevant on DRM fbdev (SetMode cannot change
+		# the KMS mode); gfbdc re-adopts the real geometry via getMode
+		dc.setResolution(desktop.size().width(), desktop.size().height())
+		try:
+			desktop.resize(dc.getResolution())
+		except AttributeError:
+			pass  # binding without getResolution: surface still re-adopted
+		print("[HistbVideoModes] desktop re-synced to real fb geometry")
+	except Exception as error:
+		print("[HistbVideoModes] desktop sync failed: %s" % error)
+
+
 def applyMode(name):
 	# apply one of the histb-style mode names via a legacy drmModeSetCrtc on
 	# the current framebuffer; the decode backend owns the video planes while
@@ -323,6 +345,8 @@ def applyMode(name):
 						lib.drmDropMaster(mfd)
 						os.close(mfd)
 				print("[HistbVideoModes] %s -> %s" % (name, "applied" if ok else "rejected"))
+				if ok:
+					syncDesktop()
 				return ok
 			finally:
 				lib.drmModeFreeResources(res)
