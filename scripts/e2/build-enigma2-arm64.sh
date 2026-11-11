@@ -840,7 +840,13 @@ LIBS="-lasound -ldrm -ldl" \
 grep -E "boxtype|alsa|fbdev" "$WORK/configure.out" | head -5 || true
 
 # --- 3. build + stage -----------------------------------------------------------------------
-make -j"$JOBS" > "$WORK/make.out" 2>&1 || { tail -60 "$WORK/make.out"; exit 1; }
+make -j"$JOBS" > "$WORK/make.out" 2>&1 || {
+  echo "=== make FAILED: error lines with context ==="
+  grep -nE -B3 -A8 "error:|Error [12]" "$WORK/make.out" | head -150 || true
+  echo "=== make.out tail ==="
+  tail -30 "$WORK/make.out"
+  exit 1
+}
 make install DESTDIR="$WORK/stage" >> "$WORK/make.out" 2>&1
 
 # DVB text fallback: this cable network carries raw GBK/GB2312 channel names
