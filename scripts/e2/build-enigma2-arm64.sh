@@ -923,6 +923,12 @@ machinebuild=hi3798cv200
 machine=himedia-q10-pro
 model=himedia-q10-pro
 architecture=arm
+displaybrand=HiMedia
+displaymodel=HiMedia Q10 Pro
+displaydistro=OpenPLi
+imagetype=release
+imageversion=1.0
+compiledate=20261111
 EOF
 # append a valid checksum so BoxInfo reports "data loaded" instead of "checksum failed"
 # (an invalid checksum triggers the IncorrectBoxInfoWizard on every first boot).
