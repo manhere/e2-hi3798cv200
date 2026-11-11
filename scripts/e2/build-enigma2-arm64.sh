@@ -1343,6 +1343,11 @@ imagetype=release
 imageversion='1.0'
 compiledate='20261111'
 oe=openpli
+# HardwareInfo.device_hdmi = BoxInfo.getItem('hdmi'); without this key
+# has_hdmi() is False and VideoHardware shows the HDMI port as "DVI"
+# (enigma2's internal HDMI port id is "DVI"; the key only controls the
+# user-visible label and HDMI-first port ordering in createConfig).
+hdmi=true
 EOF
 # kernel value comes from the build host = the target kernel series the drivers
 # were built for; About screen shows it verbatim via getKernelVersionString().
@@ -1390,6 +1395,19 @@ cp -a "$WORK/src/skin-plihd/usr/share/enigma2/PLi-FullHD" "$WORK/stage/usr/share
 grep -q 'yres="1080"' "$WORK/stage/usr/share/enigma2/PLi-FullHD/skin.xml" || \
   { echo "PLi-FullHD is not 1080p"; exit 1; }
 echo "shipped PLi-FullHD skin ($(find "$WORK/stage/usr/share/enigma2/PLi-FullHD" -type f | wc -l) files)"
+
+# menu.xml: drop the avsetup placeholder entry. setup.xml keeps avsetup as a
+# bare placeholder ("this is just a placeholder, the Videomode plugin implements
+# this submenu"), so the stock "Video settings" item opens a generic Setup
+# screen that only shows "No config items available". The Videomode plugin
+# registers the functional "A/V settings" under the same menu id, so the
+# placeholder entry is dead weight that just confuses the menu.
+sed -i '/<item key="av_setup" /d' "$WORK/stage/usr/share/enigma2/menu.xml"
+if grep -q 'av_setup' "$WORK/stage/usr/share/enigma2/menu.xml"; then
+  echo "WARN: av_setup placeholder still present in menu.xml"
+else
+  echo "menu.xml: avsetup placeholder entry removed"
+fi
 
 # setup.py build compiles the .po catalogs into plugin/locale (optional).
 ( cd "$WORK/src/openwebif" && python3 setup.py build > "$WORK/openwebif-build.out" 2>&1 ) || \
