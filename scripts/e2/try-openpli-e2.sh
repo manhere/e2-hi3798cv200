@@ -42,10 +42,13 @@ setup_env() {
          datarootdir="$P/share" datadir="$P/share" \
          sysconfdir="$P/etc" sharedstatedir="$P/com" localstatedir="$P/var" \
          libdir="$P/lib" localedir="$P/share/locale"
-  # enigma.cpp uses setenv(..., 0) for PYTHONPATH -> ours wins.
-  export PYTHONPATH="$P/lib/enigma2/python"
+  # enigma.cpp uses setenv(..., 0) for PYTHONPATH -> ours wins. The extra
+  # $ROOT/python holds third-party modules installed into the trial tree only.
+  export PYTHONPATH="$ROOT/python:$P/lib/enigma2/python"
   # runtime .so shipped by the tarball (libdvbsi++, libtuxtxt, libtuxtxt32bpp)
   export LD_LIBRARY_PATH="$P/lib/aarch64-linux-gnu:$P/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  # in-trial shims (chronyc etc.) must win over the system PATH
+  export PATH="$ROOT/bin:$PATH"
   export HOME="$ROOT/home"
   export PYTHONUTF8=1
 }
@@ -87,6 +90,11 @@ prepare)
   if [ ! -f "$P/etc/enigma2/settings" ]; then
     echo 'config.skin.primary_skin=skin_default/skin.xml' > "$P/etc/enigma2/settings"
   fi
+  # UsageConfig defaults config.ntp.timesync to "auto", whose notifier runs
+  # `/etc/init.d/chronyd status` + `update-rc.d chronyd enable 3` on the HOST.
+  # Force transponder time so the trial never touches system init config.
+  grep -q '^config.ntp.timesync=' "$P/etc/enigma2/settings" || \
+    echo 'config.ntp.timesync=dvb' >> "$P/etc/enigma2/settings"
 
   # Repair dangling font symlinks. Older artifacts link Italic/Handwriting to
   # DejaVuSans-Oblique / DejaVuSans-ExtraLight, which trixie's
@@ -110,6 +118,62 @@ prepare)
         break
       fi
     done
+  done
+
+  # Components/Network.py imports netifaces, which is not installed system-wide.
+  # Extract the Debian module into the trial tree ONLY (apt-get download +
+  # dpkg-deb -x): no system package is installed, so the other image is
+  # untouched. twisted / PIL / OpenSSL are already provided by the system.
+  mkdir -p "$ROOT/python" "$ROOT/deb"
+  if ! ls "$ROOT/python"/netifaces* >/dev/null 2>&1; then
+    if ! ls "$ROOT/deb"/python3-netifaces*.deb >/dev/null 2>&1; then
+      (cd "$ROOT/deb" && apt-get download python3-netifaces >/dev/null 2>&1) || {
+        echo "ERROR: cannot fetch python3-netifaces deb (apt-get download failed)"; exit 1; }
+    fi
+    for deb in "$ROOT/deb"/python3-netifaces*.deb; do
+      dpkg-deb -x "$deb" "$ROOT/deb/root" || { echo "ERROR: dpkg-deb -x failed"; exit 1; }
+    done
+    cp -a "$ROOT/deb/root/usr/lib/python3/dist-packages"/netifaces* "$ROOT/python/" || {
+      echo "ERROR: netifaces module not found in deb"; exit 1; }
+    echo "installed netifaces into the trial tree"
+  fi
+
+  # UsageConfig.NtpTimeSync.isUsable() runs `chronyc tracking` at startup and
+  # only catches CalledProcessError; a missing binary raises FileNotFoundError
+  # and kills E2 outright. Provide a harmless in-trial shim instead of
+  # installing the system chrony package (which would start chronyd and change
+  # time sync for the other image). It reports "not usable" so E2 keeps DVB time.
+  mkdir -p "$ROOT/bin"
+  cat > "$ROOT/bin/chronyc" <<'SHIM'
+#!/bin/sh
+# Isolated OpenPLi trial shim — no system chrony is installed.
+if [ "${1:-}" = "tracking" ]; then
+  echo "Leap status     : Not synchronised"
+fi
+exit 0
+SHIM
+  chmod 755 "$ROOT/bin/chronyc"
+
+  # UsageConfig.timesyncChanged() calls `/etc/init.d/chronyd status` and then
+  # `update-rc.d chronyd enable/disable 3` for EVERY timesync choice. The
+  # absolute init script simply fails (chrony is not installed), but
+  # update-rc.d would touch /etc/rc*.d on the host. Put a no-op shim earlier
+  # in PATH so the trial cannot modify the system init configuration.
+  cat > "$ROOT/bin/update-rc.d" <<'SHIM'
+#!/bin/sh
+# Isolated OpenPLi trial: swallow Enigma2's init-system changes.
+exit 0
+SHIM
+  chmod 755 "$ROOT/bin/update-rc.d"
+
+  # skin.py derives DEFAULT_SKIN from BoxInfo ("E2-DarkOS/skin.xml" or
+  # "PLi-HD/skin.xml"); neither ships with enigma2, so it logs "Using emergency
+  # skin". Alias both names to the in-tree skin_default (relative symlink, so
+  # all relative image/font references still resolve).
+  for s in E2-DarkOS PLi-HD; do
+    if [ -d "$P/share/enigma2/skin_default" ] && [ ! -e "$P/share/enigma2/$s" ]; then
+      ln -sfn skin_default "$P/share/enigma2/$s"
+    fi
   done
 
   # SystemInfo.py hardcodes /usr/lib/enigma.info. Back up a genuine host file;
@@ -140,7 +204,11 @@ prepare)
     if [ ! -e "$link" ]; then echo "BROKEN font: $link"; broken=1; fi
   done
   [ "$broken" = 0 ] || { echo "ERROR: skin fonts are dangling"; exit 1; }
-  echo "skin fonts OK"
+  [ -x "$ROOT/bin/chronyc" ] && [ -x "$ROOT/bin/update-rc.d" ] || { echo "ERROR: trial shims missing"; exit 1; }
+  if ! PYTHONPATH="$ROOT/python" python3 -c 'import netifaces' >/dev/null 2>&1; then
+    echo "ERROR: netifaces module not importable in the trial tree"; exit 1
+  fi
+  echo "skin fonts OK, shims + netifaces present"
   echo "prepared. Next: $0 run --stop-current-e2"
   ;;
 
@@ -149,6 +217,7 @@ run)
     echo "Refusing to pause the running E2 without explicit consent."; echo "usage: $0 run --stop-current-e2"; exit 2; }
   [ "$(id -u)" = 0 ] || { echo "run as root"; exit 1; }
   [ -x "$P/bin/enigma2" ] || { echo "run '$0 prepare' first"; exit 1; }
+  [ -x "$ROOT/bin/chronyc" ] && [ -x "$ROOT/bin/update-rc.d" ] || { echo "run '$0 prepare' first (trial shims missing)"; exit 1; }
 
   setup_env
   if ldd "$P/bin/enigma2" | grep -q 'not found'; then
