@@ -15,7 +15,7 @@ from enigma import eServiceReference, eTimer
 from twisted.internet import reactor
 
 from Components.config import config
-from NavigationInstance import NavigationInstance
+import NavigationInstance  # OpenPLi: module attribute .instance, no class to import
 
 from Plugins.SystemPlugins.Videomode.HistbVideoModes import readEdidModes, applyMode
 
