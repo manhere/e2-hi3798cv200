@@ -11,8 +11,8 @@ import glob
 import os
 
 DRM_MODE_CONNECTED = 1
-DRM_MODE_FLAG_INTERLACE = 1 << 2
-DRM_MODE_FLAG_DBLSCAN = 1 << 3
+DRM_MODE_FLAG_INTERLACE = 1 << 4
+DRM_MODE_FLAG_DBLSCAN = 1 << 5
 DRM_MODE_CONNECTOR_HDMIA = 11
 DRM_MODE_CONNECTOR_HDMIB = 12
 
@@ -26,7 +26,8 @@ class _ModeInfo(ctypes.Structure):
 		("vdisplay", ctypes.c_uint16), ("vsync_start", ctypes.c_uint16),
 		("vsync_end", ctypes.c_uint16), ("vtotal", ctypes.c_uint16),
 		("vscan", ctypes.c_uint16),
-		("flags", ctypes.c_uint32), ("type", ctypes.c_uint32),
+		("vrefresh", ctypes.c_uint32), ("flags", ctypes.c_uint32),
+		("type", ctypes.c_uint32),
 		("name", ctypes.c_char * 32),
 	]
 
@@ -44,7 +45,7 @@ class _Res(ctypes.Structure):
 
 class _Connector(ctypes.Structure):
 	_fields_ = [
-		("encoder_id", ctypes.c_uint32), ("connector_id", ctypes.c_uint32),
+		("connector_id", ctypes.c_uint32), ("encoder_id", ctypes.c_uint32),
 		("connector_type", ctypes.c_uint32), ("connector_type_id", ctypes.c_uint32),
 		("connection", ctypes.c_uint32), ("mm_width", ctypes.c_uint32),
 		("mm_height", ctypes.c_uint32), ("subpixel", ctypes.c_uint32),
@@ -57,28 +58,29 @@ class _Connector(ctypes.Structure):
 
 class _Crtc(ctypes.Structure):
 	_fields_ = [
-		("crtc_id", ctypes.c_uint32), ("fb_id", ctypes.c_uint32),
+		("crtc_id", ctypes.c_uint32), ("buffer_id", ctypes.c_uint32),
 		("x", ctypes.c_uint32), ("y", ctypes.c_uint32),
-		("gamma_size", ctypes.c_uint32), ("mode_valid", ctypes.c_int),
-		("mode", _ModeInfo),
+		("width", ctypes.c_uint32), ("height", ctypes.c_uint32),
+		("mode_valid", ctypes.c_int), ("mode", _ModeInfo),
+		("gamma_size", ctypes.c_int), ("gamma_ptr", ctypes.c_void_p),
 	]
 
 
 class _Encoder(ctypes.Structure):
 	_fields_ = [
 		("encoder_id", ctypes.c_uint32), ("encoder_type", ctypes.c_uint32),
-		("crtcs", ctypes.c_uint32), ("clones", ctypes.c_uint32),
-		("crtc_id", ctypes.c_uint32),
+		("crtc_id", ctypes.c_uint32), ("possible_crtcs", ctypes.c_uint32),
+		("possible_clones", ctypes.c_uint32),
 	]
 
 
 class _Prop(ctypes.Structure):
 	_fields_ = [
-		("prop_id", ctypes.c_uint32), ("name", ctypes.c_char * 32),
-		("flags", ctypes.c_uint32), ("count_values", ctypes.c_uint32),
-		("values", ctypes.POINTER(ctypes.c_uint64)),
-		("count_enums", ctypes.c_uint32), ("enums", ctypes.c_void_p),
-		("count_ranges", ctypes.c_uint32), ("ranges", ctypes.c_void_p),
+		("prop_id", ctypes.c_uint32), ("flags", ctypes.c_uint32),
+		("name", ctypes.c_char * 32),
+		("count_values", ctypes.c_int), ("values", ctypes.POINTER(ctypes.c_uint64)),
+		("count_enums", ctypes.c_int), ("enums", ctypes.c_void_p),
+		("count_blobs", ctypes.c_int), ("blob_ids", ctypes.POINTER(ctypes.c_uint32)),
 	]
 
 
@@ -126,7 +128,7 @@ def _hasEdid(lib, fd, conn):
 			continue
 		prop = lib.drmModeGetProperty(fd, conn.props[i])
 		if prop:
-			name = prop.name.decode("utf-8", "replace") if prop.name else ""
+			name = prop.contents.name.decode("utf-8", "replace") if prop.contents.name else ""
 			lib.drmModeFreeProperty(prop)
 			if name == "EDID":
 				return True
@@ -181,6 +183,7 @@ def _modeName(m):
 
 
 def _pickConnector(lib, fd, res):
+	res = res.contents
 	# first connected connector with a real EDID, HDMI preferred; returns
 	# (connector_id, [mode info copies]) or (None, [])
 	best = None
@@ -235,11 +238,34 @@ def readEdidModes():
 	return names
 
 
+def _masterFd(lib, card):
+	# acquire an fd capable of mode-setting: our own fd with freshly acquired
+	# master first. If another master already exists inside this process (the
+	# decode backend's DRM session holds card1 while e2 runs), drmSetMaster
+	# on a new fd fails with EBUSY, but it is a success no-op on the fd that
+	# already holds master - reuse that one. Such a borrowed fd is never
+	# dropped nor closed; the backend keeps its master.
+	fd = os.open(card, os.O_RDWR)
+	if lib.drmSetMaster(fd) == 0:
+		return fd, True
+	os.close(fd)
+	for link in glob.glob("/proc/self/fd/*"):
+		try:
+			if os.readlink(link) != card:
+				continue
+			cand = int(link.rsplit("/", 1)[1])
+		except (OSError, ValueError):
+			continue
+		if lib.drmSetMaster(cand) == 0:
+			return cand, False
+	return None, False
+
+
 def applyMode(name):
 	# apply one of the histb-style mode names via a legacy drmModeSetCrtc on
-	# the current framebuffer (the decode backend owns the video planes while
-	# playing; a mode change therefore only succeeds while idle, which is the
-	# normal A/V-settings flow)
+	# the current framebuffer; the decode backend owns the video planes while
+	# playing, so a mode change only succeeds while idle, which is the normal
+	# A/V-settings flow
 	lib = _drm()
 	if lib is None:
 		print("[HistbVideoModes] libdrm unavailable, cannot set mode")
@@ -264,8 +290,8 @@ def applyMode(name):
 						break
 				if target is None:
 					continue
-				crtcId = None
 				conn = lib.drmModeGetConnector(fd, connId)
+				crtcId = None
 				if conn:
 					enc = lib.drmModeGetEncoder(fd, conn.contents.encoder_id)
 					if enc:
@@ -273,24 +299,29 @@ def applyMode(name):
 							crtcId = enc.contents.crtc_id
 						lib.drmModeFreeEncoder(enc)
 					lib.drmModeFreeConnector(conn)
-				if crtcId is None and res.count_crtcs:
-					crtcId = res.crtcs[0]
+				if crtcId is None and res.contents.count_crtcs:
+					crtcId = res.contents.crtcs[0]
 				if crtcId is None:
 					continue
 				crtc = lib.drmModeGetCrtc(fd, crtcId)
 				if not crtc:
 					continue
-				fb = crtc.contents.fb_id
+				fb = crtc.contents.buffer_id
 				lib.drmModeFreeCrtc(crtc)
 				if not fb:
 					print("[HistbVideoModes] no fb bound to crtc %d" % crtcId)
 					continue
-				if lib.drmSetMaster(fd) != 0:
+				mfd, drop = _masterFd(lib, card)
+				if mfd is None:
 					print("[HistbVideoModes] cannot become DRM master (decoder busy?)")
 					continue
-				conns = (ctypes.c_uint32 * 1)(connId)
-				ok = lib.drmModeSetCrtc(fd, crtcId, fb, 0, 0, conns, 1, ctypes.byref(target)) == 0
-				lib.drmDropMaster(fd)
+				try:
+					conns = (ctypes.c_uint32 * 1)(connId)
+					ok = lib.drmModeSetCrtc(mfd, crtcId, fb, 0, 0, conns, 1, ctypes.byref(target)) == 0
+				finally:
+					if drop:
+						lib.drmDropMaster(mfd)
+						os.close(mfd)
 				print("[HistbVideoModes] %s -> %s" % (name, "applied" if ok else "rejected"))
 				return ok
 			finally:
