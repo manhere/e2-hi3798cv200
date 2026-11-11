@@ -232,7 +232,8 @@ print('patched gfbdc.cpp (adopt real fb geometry)')
 PYEOF
 
 python3 - <<'PYEOF'
-# (6) enumerate ALL platform (non-USB) DVB adapters.
+# (6) enumerate ALL platform (non-USB) DVB adapters with globally-unique
+# frontend slot ids.
 # drivers/media/platform/hisilicon/histb-dmx.c registers ONE dvb_adapter per
 # enabled TS input (HISTB_DMX_MAX_INPUTS = 6); the DVBIP-1002 DTS wires inputs
 # 0..3 to the four MxL214 outputs, so adapters 0..3 are real hardware. Each
@@ -240,9 +241,34 @@ python3 - <<'PYEOF'
 # the Tvheadend/OSCam CA mask. Stock OE code instantiates non-USB adapter0 only
 # and silently drops built-in adapters >0 ("found 1 adapter").
 # Reorder so adapter0 registers first (slot 0 = Tuner A), then instantiate
-# platform adapters 1..N as regular eDVBAdapterLinux.
+# platform adapters 1..N as regular eDVBAdapterLinux. Each adapter's
+# scanDevices() uses a per-adapter frontend index as the eDVBFrontend *slot id*;
+# without an offset every adapter would register its frontend(s) as slot 0 and
+# only one tuner would ever be usable. Pass a cumulative fe_base so the global
+# slot ids stay 1:1 with the NimManager frontend_device indices (see the
+# NimManager /dev/dvb fallback in the next patch block).
 p = 'lib/dvb/dvb.cpp'
 s = open(p, encoding='utf-8').read()
+
+# (6a) scanDevices() takes a fe_base offset; the per-adapter frontend index is
+# shifted by it so slot ids are globally unique across all adapters.
+old = 'void eDVBAdapterLinux::scanDevices()\n'
+new = 'void eDVBAdapterLinux::scanDevices(int fe_base)\n'
+assert s.count(old) == 1, 'dvb.cpp scanDevices() definition not found'
+s = s.replace(old, new, 1)
+
+# (6b) both eDVBFrontend constructors receive the slot id; shift it by fe_base.
+old = '\t\t\tfe = new eDVBFrontend(name.c_str(), num_fe, ok, true);\n'
+new = '\t\t\tfe = new eDVBFrontend(name.c_str(), num_fe + fe_base, ok, true);\n'
+assert s.count(old) == 1, 'dvb.cpp simulate frontend ctor not found'
+s = s.replace(old, new, 1)
+old = '\t\t\tfe = new eDVBFrontend(name.c_str(), num_fe, ok, false, fe);\n'
+new = '\t\t\tfe = new eDVBFrontend(name.c_str(), num_fe + fe_base, ok, false, fe);\n'
+assert s.count(old) == 1, 'dvb.cpp real frontend ctor not found'
+s = s.replace(old, new, 1)
+
+# (6c) adapter enumeration (adapter0 first, then platform adapters 1..N) with
+# fe_base threading.
 old = (
     '\tint num_adapter = 1;\n'
     '\twhile (eDVBAdapterLinux::exist(num_adapter))\n'
@@ -263,11 +289,13 @@ old = (
     '\t}\n'
 )
 new = (
+    '\tint fe_base = 0;\n'
     '\tif (eDVBAdapterLinux::exist(0))\n'
     '\t{\n'
     '\t\teDVBAdapterLinux *adapter = new eDVBAdapterLinux(0);\n'
-    '\t\tadapter->scanDevices();\n'
+    '\t\tadapter->scanDevices(fe_base);\n'
     '\t\taddAdapter(adapter, true);\n'
+    '\t\tfe_base += adapter->getNumFrontends();\n'
     '\t}\n'
     '\n'
     '\tint num_adapter = 1;\n'
@@ -282,15 +310,292 @@ new = (
     '\t\t{\n'
     '\t\t\t// platform (non-USB) adapters >0 are real hardware here\n'
     '\t\t\teDVBAdapterLinux *adapter = new eDVBAdapterLinux(num_adapter);\n'
-    '\t\t\tadapter->scanDevices();\n'
+    '\t\t\tadapter->scanDevices(fe_base);\n'
     '\t\t\taddAdapter(adapter);\n'
+    '\t\t\tfe_base += adapter->getNumFrontends();\n'
     '\t\t}\n'
     '\t\tnum_adapter++;\n'
     '\t}\n'
 )
 assert old in s, 'dvb.cpp adapter enumeration block not found'
-open(p, 'w', encoding='utf-8', newline='\n').write(s.replace(old, new, 1))
-print('patched dvb.cpp (enumerate platform adapters 1..N)')
+s = s.replace(old, new, 1)
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched dvb.cpp (enumerate platform adapters 1..N + fe_base slot ids)')
+
+# (6d) matching header declaration so the default arg is visible everywhere.
+p = 'lib/dvb/dvb.h'
+s = open(p, encoding='utf-8').read()
+old = '\tvoid scanDevices();\n'
+new = '\tvoid scanDevices(int fe_base = 0);\n'
+assert s.count(old) == 1, 'dvb.h scanDevices() declaration not found'
+s = s.replace(old, new, 1)
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched dvb.h (scanDevices(int fe_base = 0))')
+PYEOF
+
+# --- 1b. ported fixes from manhere/enigma2-hi3798cv200 (.ci/patches) -------------------------
+# These are OpenATV-tree patches; each is re-anchored to OpenPLi scarthgap and
+# only the parts that apply to our UI-only (Phase 1) port are taken. Skipped:
+#   * 020-fb-setmode-fallback   -> superseded by our fb.cpp DRM-fbdev rework
+#   * 200-decoder-histb-backend -> OpenATV HAVE_HISTB decode backend; NOT
+#                                  mechanically portable to OpenPLi's decoder layer
+# Applied: 140 (decode demux), 110 (FrontendInfo crash), 080 (NIM enumeration
+# fallback), 210 (lamedb frequency-0 guard).
+
+python3 - <<'PYEOF'
+# (7a) lib/dvb/demux.cpp: DMX_SET_SOURCE fallback (live-decode blocker fix).
+# histb-dmx does not implement DMX_SET_SOURCE (removed from mainline in 4.14;
+# the driver returns ENOTTY). Stock setSourceFrontend() only records source on
+# ioctl success, so source stays -1 and allocateDemux()'s sharing test
+# (getSource() == frontend DVBID) never matches -> "no free demux found" and
+# every live decode-demux allocation fails. On this box each adapter has a
+# single frontend+demux, so the hardware routing is a no-op; record source
+# regardless so live decode can proceed.
+p = 'lib/dvb/demux.cpp'
+s = open(p, encoding='utf-8').read()
+old = (
+    '\tif (res)\n'
+    '\t\teDebug("[eDVBDemux] DMX_SET_SOURCE Frontend%d failed: %m", fenum);\n'
+    '\telse\n'
+    '\t\tsource = fenum;\n'
+)
+new = (
+    '\tif (res)\n'
+    '\t\teDebug("[eDVBDemux] DMX_SET_SOURCE Frontend%d failed: %m (recorded anyway)", fenum);\n'
+    '\t/* DVBIP-1002: histb-dmx has no DMX_SET_SOURCE (ENOTTY) and each adapter\n'
+    '\t * has a single frontend and demux, so hardware source routing is a\n'
+    '\t * no-op. Record the source anyway: allocateDemux() sharing\n'
+    '\t * (getSource() == frontend DVBID) must succeed for the live decode-demux\n'
+    '\t * allocation on the single demux of each adapter. */\n'
+    '\tsource = fenum;\n'
+)
+assert s.count(old) == 1, 'demux.cpp setSourceFrontend anchor not found'
+s = s.replace(old, new, 1)
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched demux.cpp (DMX_SET_SOURCE fallback)')
+
+# (7b) Components/Converter/FrontendInfo.py: defuse the LOCK/SLOT_NUMBER assert.
+# stock skin_default attaches Pixmap renderers to FrontendInfo>LOCK conversions;
+# Pixmap.changed() probes hasattr(source, "text") which evaluates this property
+# and raises the assert -> opening Satfinder BSODs. Lock/slot-number have no
+# meaningful text form; return "" instead.
+p = 'lib/python/Components/Converter/FrontendInfo.py'
+s = open(p, encoding='utf-8').read()
+old = '\t\tassert self.type not in (self.LOCK, self.SLOT_NUMBER), "the text output of FrontendInfo cannot be used for lock info"\n'
+new = (
+    '\t\tif self.type in (self.LOCK, self.SLOT_NUMBER):\n'
+    '\t\t\t# No meaningful text form for lock/slot-number. The stock\n'
+    '\t\t\t# skin_default attaches Pixmap renderers to FrontendInfo>LOCK\n'
+    '\t\t\t# conversions; Pixmap.changed() probes hasattr(source, "text")\n'
+    '\t\t\t# which evaluates this property - raising here BSODs Satfinder.\n'
+    '\t\t\treturn ""\n'
+)
+assert s.count(old) == 1, 'FrontendInfo.py getText assert anchor not found'
+s = s.replace(old, new, 1)
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched FrontendInfo.py (LOCK/SLOT_NUMBER returns "")')
+PYEOF
+
+python3 - <<'PYEOF'
+# (7c) Components/NimManager.py: /dev/dvb fallback NIM enumeration.
+# The only NIM data source upstream is /proc/bus/nim_sockets (dreambox-centric,
+# provided by vendor drivers). Mainline histb-dmx + mxl214 expose only standard
+# /dev/dvb/adapterN/frontend0 and no proc file -> empty tuner list. When the proc
+# file is absent, scan /dev/dvb via FE_GET_INFO and build entries in the same
+# format the proc parser produces, then reuse the existing NIM build pipeline.
+p = 'lib/python/Components/NimManager.py'
+s = open(p, encoding='utf-8').read()
+
+head_old = (
+    '\t\ttry:\n'
+    '\t\t\tnimfile = open("/proc/bus/nim_sockets")\n'
+    '\t\texcept IOError:\n'
+    '\t\t\treturn\n'
+    '\n'
+    '\t\tcurrent_slot = None\n'
+    '\n'
+    '\t\tentries = {}\n'
+    '\t\tfor line in nimfile:\n'
+)
+head_new = (
+    '\t\tentries = self.enumDevDvbFrontends()\n'
+    '\t\tif entries is None:\n'
+    '\t\t\ttry:\n'
+    '\t\t\t\tnimfile = open("/proc/bus/nim_sockets")\n'
+    '\t\t\texcept IOError:\n'
+    '\t\t\t\treturn\n'
+    '\t\t\tcurrent_slot = None\n'
+    '\t\t\tentries = {}\n'
+    '\t\t\tfor line in nimfile:\n'
+)
+assert s.count(head_old) == 1, 'NimManager enumerateNIMs head anchor not found'
+assert s.count('\t\tnimfile.close()\n') == 1, 'NimManager nimfile.close anchor not unique'
+s = s.replace(head_old, head_new, 1)
+# Re-indent the proc-parse body by one tab so it nests inside "if entries is None:".
+idx = s.index(head_new) + len(head_new)
+cid = s.index('\t\tnimfile.close()\n', idx)
+body = s[idx:cid].rstrip('\n')
+reindented = '\t' + body.replace('\n', '\n\t') + '\n'
+s = s[:idx] + reindented + s[cid:]
+s = s.replace('\t\tnimfile.close()\n', '\t\t\tnimfile.close()\n', 1)
+assert s.count(head_new) == 1 and s.count('\t\t\tnimfile.close()\n') == 1, 'NimManager reindent sanity failed'
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched NimManager.py (dev/dvb fallback NIM enumeration)')
+
+# (7d) add the enumDevDvbFrontends() helper right before enumerateNIMs().
+method = '''\tdef enumDevDvbFrontends(self):
+\t\t# Hi3798CV200: mainline DVB drivers (histb-dmx + mxl214) expose only
+\t\t# standard /dev/dvb/adapterN/frontend0 and no /proc/bus/nim_sockets
+\t\t# (dreambox-centric interface no mainline driver provides). Enumerate
+\t\t# frontends via FE_GET_INFO and return entries in the same format the
+\t\t# /proc parser produces. Returns None when the proc file exists so it
+\t\t# keeps priority; {} when /dev/dvb is absent.
+\t\tif os.path.exists("/proc/bus/nim_sockets"):
+\t\t\treturn None
+\t\tif not os.path.exists("/dev/dvb"):
+\t\t\treturn {}
+\t\timport ctypes
+\t\timport fcntl
+
+\t\tclass FrontendInfo(ctypes.Structure):
+\t\t\t_fields_ = [
+\t\t\t\t("name", ctypes.c_char * 128),
+\t\t\t\t("type", ctypes.c_int),
+\t\t\t\t("frequency_min", ctypes.c_uint32),
+\t\t\t\t("frequency_max", ctypes.c_uint32),
+\t\t\t\t("frequency_stepsize", ctypes.c_uint32),
+\t\t\t\t("frequency_tolerance", ctypes.c_uint32),
+\t\t\t\t("symbol_rate_min", ctypes.c_uint32),
+\t\t\t\t("symbol_rate_max", ctypes.c_uint32),
+\t\t\t\t("symbol_rate_tolerance", ctypes.c_uint32),
+\t\t\t\t("notifier_delay", ctypes.c_uint32),
+\t\t\t\t("caps", ctypes.c_uint32),
+\t\t\t]
+
+\t\tFE_GET_INFO = 0x80A86F3D  # _IOR('o', 61, struct dvb_frontend_info)
+\t\ttypeMap = {0: "DVB-S", 1: "DVB-C", 2: "DVB-T", 3: "ATSC"}
+\t\tentries = {}
+\t\tfrontendIndex = 0
+\t\tfor adapter in sorted(os.listdir("/dev/dvb")):
+\t\t\tif not adapter.startswith("adapter"):
+\t\t\t\tcontinue
+\t\t\tfePath = os.path.join("/dev/dvb", adapter, "frontend0")
+\t\t\tif not os.path.exists(fePath):
+\t\t\t\tcontinue
+\t\t\ttry:
+\t\t\t\tfd = os.open(fePath, os.O_RDONLY)
+\t\t\t\ttry:
+\t\t\t\t\tinfo = FrontendInfo()
+\t\t\t\t\tfcntl.ioctl(fd, FE_GET_INFO, info)
+\t\t\t\tfinally:
+\t\t\t\t\tos.close(fd)
+\t\t\t\tfeType = typeMap.get(info.type)
+\t\t\t\tif feType is None:
+\t\t\t\t\tprint("[NimManager] %s: unsupported FE type %d, skipped" % (fePath, info.type))
+\t\t\t\t\tcontinue
+\t\t\t\tfeName = info.name.decode("utf-8", "replace").strip() or fePath
+\t\t\t\tentries[frontendIndex] = {
+\t\t\t\t\t"type": feType,
+\t\t\t\t\t"name": feName,
+\t\t\t\t\t"isempty": False,
+\t\t\t\t\t"frontend_device": frontendIndex,
+\t\t\t\t}
+\t\t\t\tprint("[NimManager] fallback NIM scan: slot %d '%s' (%s)" % (frontendIndex, feName, feType))
+\t\t\t\tfrontendIndex += 1
+\t\t\texcept Exception as err:
+\t\t\t\tprint("[NimManager] fallback NIM scan failed on %s: %s" % (fePath, err))
+\t\treturn entries
+
+\tdef enumerateNIMs(self):
+'''
+anchor = '\tdef enumerateNIMs(self):\n'
+assert s.count(anchor) == 1, 'NimManager enumerateNIMs method anchor not unique'
+s = s.replace(anchor, method, 1)
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('added NimManager.py enumDevDvbFrontends() helper')
+PYEOF
+
+python3 - <<'PYEOF'
+# (7e) lib/dvb/db.cpp: reject / skip transponders with frequency 0.
+# A flaky frontend can report frequency 0; feeding that feparm back through
+# addChannelToList clobbers the good in-memory record and saveServicelist then
+# persists "t 0:0:5:..." into lamedb, so every later start tunes to 0 kHz.
+# Guard 1 drops feparm updates with frequency 0; guard 2 never persists them.
+p = 'lib/dvb/db.cpp'
+s = open(p, encoding='utf-8').read()
+
+old1 = (
+    'RESULT eDVBDB::addChannelToList(const eDVBChannelID &id, iDVBFrontendParameters *feparm)\n'
+    '{\n'
+    '\tchannel ch;\n'
+    '\tstd::map<eDVBChannelID, channel>::iterator it = m_channels.find(id);\n'
+    '\tASSERT(feparm);\n'
+    '\tch.m_frontendParameters = feparm;\n'
+)
+new1 = (
+    'RESULT eDVBDB::addChannelToList(const eDVBChannelID &id, iDVBFrontendParameters *feparm)\n'
+    '{\n'
+    '\tchannel ch;\n'
+    '\tstd::map<eDVBChannelID, channel>::iterator it = m_channels.find(id);\n'
+    '\tASSERT(feparm);\n'
+    '\t/* a broken frontend can report frequency 0; keep the previous record */\n'
+    '\t{\n'
+    '\t\teDVBFrontendParametersSatellite sat;\n'
+    '\t\teDVBFrontendParametersTerrestrial ter;\n'
+    '\t\teDVBFrontendParametersCable cab;\n'
+    '\t\teDVBFrontendParametersATSC atsc;\n'
+    '\t\tunsigned int freqchk;\n'
+    '\t\tif (!feparm->getDVBS(sat)) freqchk = sat.frequency;\n'
+    '\t\telse if (!feparm->getDVBT(ter)) freqchk = ter.frequency;\n'
+    '\t\telse if (!feparm->getDVBC(cab)) freqchk = cab.frequency;\n'
+    '\t\telse if (!feparm->getATSC(atsc)) freqchk = atsc.frequency;\n'
+    '\t\telse freqchk = 1; /* unknown delivery system: do not judge */\n'
+    '\t\tif (freqchk == 0)\n'
+    '\t\t{\n'
+    '\t\t\teDebug("[eDVBDB] addChannelToList: reject %08x:%04x:%04x, frequency 0 from frontend", id.dvbnamespace.get(), id.transport_stream_id.get(), id.original_network_id.get());\n'
+    '\t\t\treturn -1;\n'
+    '\t\t}\n'
+    '\t}\n'
+    '\tch.m_frontendParameters = feparm;\n'
+)
+assert s.count(old1) == 1, 'db.cpp addChannelToList anchor not found'
+s = s.replace(old1, new1, 1)
+
+old2 = (
+    '\t\tconst eDVBChannelID &chid = i->first;\n'
+    '\t\tconst channel &ch = i->second;\n'
+    '\n'
+    '\t\tfprintf(f, "%08x:%04x:%04x\\n", chid.dvbnamespace.get(),\n'
+)
+new2 = (
+    '\t\tconst eDVBChannelID &chid = i->first;\n'
+    '\t\tconst channel &ch = i->second;\n'
+    '\n'
+    '\t\t/* never persist transponders with frequency 0 (broken frontend data) */\n'
+    '\t\t{\n'
+    '\t\t\teDVBFrontendParametersSatellite sat;\n'
+    '\t\t\teDVBFrontendParametersTerrestrial ter;\n'
+    '\t\t\teDVBFrontendParametersCable cab;\n'
+    '\t\t\teDVBFrontendParametersATSC atsc;\n'
+    '\t\t\tunsigned int freqchk;\n'
+    '\t\t\tif (!ch.m_frontendParameters->getDVBS(sat)) freqchk = sat.frequency;\n'
+    '\t\t\telse if (!ch.m_frontendParameters->getDVBT(ter)) freqchk = ter.frequency;\n'
+    '\t\t\telse if (!ch.m_frontendParameters->getDVBC(cab)) freqchk = cab.frequency;\n'
+    '\t\t\telse if (!ch.m_frontendParameters->getATSC(atsc)) freqchk = atsc.frequency;\n'
+    '\t\t\telse freqchk = 1;\n'
+    '\t\t\tif (freqchk == 0)\n'
+    '\t\t\t{\n'
+    '\t\t\t\teDebug("[eDVBDB] saveServicelist: skip %08x:%04x:%04x, frequency 0 (omitted from lamedb output)", chid.dvbnamespace.get(), chid.transport_stream_id.get(), chid.original_network_id.get());\n'
+    '\t\t\t\tcontinue;\n'
+    '\t\t\t}\n'
+    '\t\t}\n'
+    '\n'
+    '\t\tfprintf(f, "%08x:%04x:%04x\\n", chid.dvbnamespace.get(),\n'
+)
+assert s.count(old2) == 1, 'db.cpp saveServicelist anchor not found'
+s = s.replace(old2, new2, 1)
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched db.cpp (frequency-0 transponder guards)')
 PYEOF
 
 # --- 2. configure (generic box, fbdev main display, alsa audio) -----------------------------
