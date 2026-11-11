@@ -780,6 +780,83 @@ open(p, 'w', encoding='utf-8', newline='\n').write(s)
 print('patched decoder.cpp (HAVE_HISTB backend sandwich + streamtype relocation)')
 PYEOF
 
+# --- 1f. Videomode plugin: KMS/EDID mode backend (reference avcontrol port) --
+# The box has no /proc/stb/video/videomode_choices, so VideoHardware's
+# readAvailableModes() yields an empty mode list: every getModeList() is
+# empty, config.av.videomode stays an empty dict and the A/V settings screen
+# crashes (KeyError 'RCA' in grabLastGoodMode). Port the reference OpenATV
+# histb avcontrol backend (packaging/avcontrol_histb_impl.h + histb_drm.h)
+# to the OpenPLi Python layer: HistbVideoModes.py enumerates EDID modes
+# through libdrm/ctypes with the same histb mode naming, and applies modes
+# via drmModeSetCrtc; VideoHardware falls back to it when the vendor procfs
+# is absent. EDID-backed preferred modes also make the DVI/HDMI port
+# selectable in the video wizard again (isPortUsed("DVI") needs them).
+cp "$E2_PKG_DIR/HistbVideoModes.py" lib/python/Plugins/SystemPlugins/Videomode/HistbVideoModes.py
+
+python3 - <<'PYEOF'
+p = "lib/python/Plugins/SystemPlugins/Videomode/VideoHardware.py"
+s = open(p, encoding='utf-8').read()
+
+# 1) import the KMS helper next to the existing imports
+old = "from Tools.HardwareInfo import HardwareInfo\nimport os\n"
+new = "from Tools.HardwareInfo import HardwareInfo\nfrom Plugins.SystemPlugins.Videomode.HistbVideoModes import readEdidModes, applyMode\nimport os\n"
+assert s.count(old) == 1, 'VideoHardware import anchor not found'
+s = s.replace(old, new)
+
+# 2) readAvailableModes: EDID fallback when the vendor procfs is absent
+old = '''\tdef readAvailableModes(self):
+\t\ttry:
+\t\t\tmodes = open("/proc/stb/video/videomode_choices").read()[:-1]
+\t\texcept IOError:
+\t\t\tprint("[VideoHardware] couldn't read available videomodes.")
+\t\t\tself.modes_available = []
+\t\t\treturn
+\t\tself.modes_available = modes.split(' ')'''
+new = '''\tdef readAvailableModes(self):
+\t\ttry:
+\t\t\tmodes = open("/proc/stb/video/videomode_choices").read()[:-1]
+\t\texcept IOError:
+\t\t\t# no vendor procfs: enumerate EDID modes from KMS, the same
+\t\t\t# source as the reference histb avcontrol backend
+\t\t\tself.modes_available = readEdidModes()
+\t\t\tprint("[VideoHardware] no videomode_choices, %d EDID modes: %s" % (len(self.modes_available), ' '.join(self.modes_available)))
+\t\t\treturn
+\t\tself.modes_available = modes.split(' ')'''
+assert s.count(old) == 1, 'readAvailableModes anchor not found'
+s = s.replace(old, new)
+
+# 3) setMode: apply via KMS when there is no procfs to write
+old = '''\t\ttry:
+\t\t\topen("/proc/stb/video/videomode_50hz", "w").write(mode_50)
+\t\t\topen("/proc/stb/video/videomode_60hz", "w").write(mode_60)
+\t\texcept IOError:
+\t\t\ttry:
+\t\t\t\t# fallback if no possibility to setup 50/60 hz mode
+\t\t\t\topen("/proc/stb/video/videomode", "w").write(mode_50)
+\t\t\texcept IOError:
+\t\t\t\tprint("[VideoHardware] setting videomode failed.")'''
+new = '''\t\tif os.path.exists("/proc/stb/video/videomode_50hz"):
+\t\t\ttry:
+\t\t\t\topen("/proc/stb/video/videomode_50hz", "w").write(mode_50)
+\t\t\t\topen("/proc/stb/video/videomode_60hz", "w").write(mode_60)
+\t\t\texcept IOError:
+\t\t\t\ttry:
+\t\t\t\t\t# fallback if no possibility to setup 50/60 hz mode
+\t\t\t\t\topen("/proc/stb/video/videomode", "w").write(mode_50)
+\t\t\t\texcept IOError:
+\t\t\t\t\tprint("[VideoHardware] setting videomode failed.")
+\t\telse:
+\t\t\t# no vendor procfs: apply the 50Hz mode through KMS, like the
+\t\t\t# reference histb backend (setVideoModeMulti -> setVideoMode(mode50))
+\t\t\tif not applyMode(mode_50):
+\t\t\t\tprint("[VideoHardware] setting videomode %s failed (KMS)." % mode_50)'''
+assert s.count(old) == 1, 'setMode anchor not found'
+s = s.replace(old, new)
+
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched VideoHardware.py (KMS/EDID mode fallback via HistbVideoModes)')
+PYEOF
+
 # --- 1e. hivxe-ffmpeg compile-time headers -----------------------------------
 # The backend dlopens the runtime libs already installed on the box
 # (/usr/local/lib/hivxe-ffmpeg, avcodec 63.1.101) but compiles against
