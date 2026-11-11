@@ -772,13 +772,16 @@ PYEOF
 
 # --- 1e. hivxe-ffmpeg compile-time headers -----------------------------------
 # The backend dlopens the runtime libs already installed on the box
-# (/usr/local/lib/hivxe-ffmpeg, avcodec 63.1.101) but compiles against the
-# headers of the same HiSilicon fork. Debian's libavcodec-dev cannot be used:
-# it lacks hwcontext_v4l2request.h and has a different ABI generation.
+# (/usr/local/lib/hivxe-ffmpeg, avcodec 63.1.101) but compiles against
+# HiSilicon-fork headers. Source: manhere/FFmpeg-hiSilicon @ dra-decoder
+# (HiSilicon fork + DRA decoder; its libavcodec/codec_id.h exports the
+# AV_CODEC_ID_DRA the audio codec map resolves by id). Debian's
+# libavcodec-dev cannot be used: it lacks hwcontext_v4l2request.h and has
+# a different ABI generation.
 FF_SRC="$WORK/src/ffmpeg-hivxe"
 FF_INC="$WORK/ff-include"
 if [ ! -f "$FF_SRC/libavcodec/avcodec.h" ]; then
-  git clone --depth 1 https://github.com/HiSilicon-Development/FFmpeg "$FF_SRC"
+  git clone --depth 1 -b dra-decoder https://github.com/manhere/FFmpeg-hiSilicon "$FF_SRC"
 fi
 mkdir -p "$FF_INC/libavcodec" "$FF_INC/libavutil" "$FF_INC/libswresample" "$FF_INC/libswscale"
 cp "$FF_SRC"/libavcodec/*.h "$FF_INC/libavcodec/"

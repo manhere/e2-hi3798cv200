@@ -2540,11 +2540,10 @@ public:
 			{eDVBAudio::aLPCM,  AV_CODEC_ID_PCM_S16BE, "lpcm"},
 			{eDVBAudio::aDTSHD, AV_CODEC_ID_DTS,       "dtshd"},
 			{eDVBAudio::aDDP,   AV_CODEC_ID_EAC3,      "eac3"},
-			/* HiSilicon-Development/FFmpeg HEAD headers do not export
-			 * AV_CODEC_ID_DRA (upstream FFmpeg has no such id either);
-			 * resolve the runtime DRA decoder by name "dra" via the
-			 * avcodec_find_decoder_by_name() fallback below instead */
-			{eDVBAudio::aDRA,   AV_CODEC_ID_NONE,      "dra"},
+			/* headers from manhere/FFmpeg-hiSilicon @ dra-decoder export
+			 * AV_CODEC_ID_DRA (libavcodec/codec_id.h:562); resolve by
+			 * codec id, falling back to the decoder name "dra" if needed */
+			{eDVBAudio::aDRA,   AV_CODEC_ID_DRA,       "dra"},
 			{eDVBAudio::aAC4,   AV_CODEC_ID_AC4,       "ac4"},
 		};
 		const AVCodec *codec = nullptr;
