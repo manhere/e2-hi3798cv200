@@ -69,7 +69,9 @@ Phase 1 (this repo, CI green = artifact `e2-arm64-trixie`):
   (`6c63ba06`, 2.4.1) is installed into
   `usr/lib/enigma2/python/Plugins/Extensions/OpenWebif`. Its E2 APIs all exist
   in scarthgap, Cheetah templates are compiled at runtime, and the plugin
-  self-starts via `WHERE_SESSIONSTART` (HTTP on the box's web port).
+  self-starts via `WHERE_SESSIONSTART` (HTTP on port 80). One OpenATV-only
+  module (`Tools.CopyFiles`) is supplied as a small compatibility shim because
+  OpenWebif imports it at module scope.
 - Deliverable: `e2-arm64.tar.gz` (`usr/` layout) + `install-enigma2-arm64.sh`.
 
 Phase 2: TV pipeline — DVB-C scanning works against the standard frontend API;

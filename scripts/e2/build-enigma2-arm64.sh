@@ -417,6 +417,35 @@ cp -a "$WORK/src/openwebif/plugin" "$WORK/stage/usr/lib/enigma2/python/Plugins/E
   { echo "OpenWebif plugin missing"; exit 1; }
 echo "shipped OpenWebif plugin"
 
+# OpenWebif 2.4.1 imports Tools.CopyFiles at module scope in
+# controllers/models/movies.py. That module is OpenATV-specific and absent
+# from OpenPLi scarthgap, which otherwise aborts the whole httpserver import
+# chain. Provide the two functions it actually uses (its other optional
+# OpenATV imports are already inside try/except or local functions).
+cat > "$WORK/stage/usr/lib/enigma2/python/Tools/CopyFiles.py" <<'PY'
+# Compatibility shim: OpenWebif expects OpenATV's Tools.CopyFiles, which
+# OpenPLi scarthgap does not ship. Only copyFiles/moveFiles are used.
+import os
+import shutil
+
+
+def _run(items, func):
+	for src, dst in items:
+		parent = os.path.dirname(dst)
+		if parent:
+			os.makedirs(parent, exist_ok=True)
+		func(src, dst)
+
+
+def copyFiles(items, name=None):
+	_run(items, shutil.copy2)
+
+
+def moveFiles(items, name=None):
+	_run(items, shutil.move)
+PY
+echo "shipped Tools.CopyFiles compatibility shim"
+
 # --- 5. verify + package --------------------------------------------------------------------
 BIN="$WORK/stage/usr/bin/enigma2"
 [ -x "$BIN" ] || { echo "enigma2 binary missing"; exit 1; }
