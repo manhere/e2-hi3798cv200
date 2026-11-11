@@ -326,13 +326,29 @@ for lib in libdvbsi++ libtuxtxt libtuxtxt32bpp; do
   [ -n "$srcs" ] || { echo "runtime lib $lib not found in /usr/lib*"; exit 1; }
   cp -a $srcs "$STAGE_LIB/"
 done
+# skin_default declares Regular/Bold/Italic/Handwriting. Debian's
+# fonts-dejavu-core differs per release: trixie ships only DejaVuSans(.ttf),
+# DejaVuSans-Bold.ttf plus Mono/Serif variants — NO DejaVuSans-Oblique.ttf or
+# DejaVuSans-ExtraLight.ttf. `ln -sf` happily creates a dangling link (so the
+# old `|| fallback` never fired). Pick the first EXISTING candidate instead.
 mkdir -p "$WORK/stage/usr/share/fonts/ttf"
 DJ=/usr/share/fonts/truetype/dejavu
-ln -sf "$DJ/DejaVuSans.ttf"         "$WORK/stage/usr/share/fonts/ttf/Regular.ttf"
-ln -sf "$DJ/DejaVuSans-Bold.ttf"    "$WORK/stage/usr/share/fonts/ttf/Bold.ttf"
-ln -sf "$DJ/DejaVuSans-Oblique.ttf" "$WORK/stage/usr/share/fonts/ttf/Italic.ttf"
-ln -sf "$DJ/DejaVuSans-ExtraLight.ttf" "$WORK/stage/usr/share/fonts/ttf/Handwriting.ttf" 2>/dev/null || \
-  ln -sf "$DJ/DejaVuSansCondensed.ttf" "$WORK/stage/usr/share/fonts/ttf/Handwriting.ttf"
+for spec in \
+  "Regular.ttf:DejaVuSans.ttf" \
+  "Bold.ttf:DejaVuSans-Bold.ttf" \
+  "Italic.ttf:DejaVuSans-Oblique.ttf DejaVuSansMono-Oblique.ttf DejaVuSerif.ttf DejaVuSans.ttf" \
+  "Handwriting.ttf:DejaVuSans-ExtraLight.ttf DejaVuSansCondensed.ttf DejaVuSerif.ttf DejaVuSans.ttf"
+do
+  name=${spec%%:*}
+  candidates=${spec#*:}
+  chosen=""
+  for c in $candidates; do
+    if [ -f "$DJ/$c" ]; then chosen="$DJ/$c"; break; fi
+  done
+  [ -n "$chosen" ] || { echo "no DejaVu candidate for $name"; exit 1; }
+  ln -sfn "$chosen" "$WORK/stage/usr/share/fonts/ttf/$name"
+  echo "font $name -> $chosen"
+done
 
 # enigma.info — BoxInfo bootstrap file (Components/SystemInfo.py parses it at import).
 # Without it BoxInfo.getItem("architecture") is None and StartEnigma.py dies with

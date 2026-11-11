@@ -88,13 +88,39 @@ prepare)
     echo 'config.skin.primary_skin=skin_default/skin.xml' > "$P/etc/enigma2/settings"
   fi
 
-  # SystemInfo.py hardcodes /usr/lib/enigma.info. Back up any existing file;
-  # the other image uses /usr/local/lib/enigma.info, so there is no conflict.
+  # Repair dangling font symlinks. Older artifacts link Italic/Handwriting to
+  # DejaVuSans-Oblique / DejaVuSans-ExtraLight, which trixie's
+  # fonts-dejavu-core does not ship (ln -sf created the link anyway).
+  # Rewrite any broken link to the best font actually present on this box.
+  DJ=/usr/share/fonts/truetype/dejavu
+  for name in Regular Bold Italic Handwriting; do
+    link="$P/share/fonts/ttf/$name.ttf"
+    [ -L "$link" ] || continue
+    [ -e "$link" ] && continue
+    case "$name" in
+      Regular)     cands="DejaVuSans.ttf" ;;
+      Bold)        cands="DejaVuSans-Bold.ttf" ;;
+      Italic)      cands="DejaVuSans-Oblique.ttf DejaVuSansMono-Oblique.ttf DejaVuSerif.ttf DejaVuSans.ttf" ;;
+      Handwriting) cands="DejaVuSans-ExtraLight.ttf DejaVuSansCondensed.ttf DejaVuSerif.ttf DejaVuSans.ttf" ;;
+    esac
+    for c in $cands; do
+      if [ -f "$DJ/$c" ]; then
+        ln -sfn "$DJ/$c" "$link"
+        echo "repaired font $name.ttf -> $c"
+        break
+      fi
+    done
+  done
+
+  # SystemInfo.py hardcodes /usr/lib/enigma.info. Back up a genuine host file;
+  # the other image uses /usr/local/lib/enigma.info, so normally there is none.
+  # The cmp guard keeps prepare idempotent: on a second run the target is
+  # already our own copy and must NOT be recorded as a "host backup".
   if [ -e "$INFO_TARGET" ]; then
-    cp -a "$INFO_TARGET" "$INFO_BACKUP"
-    echo "backed up existing $INFO_TARGET -> $INFO_BACKUP"
-  else
-    rm -f "$INFO_BACKUP"
+    if ! cmp -s "$INFO_TARGET" "$P/lib/enigma.info" && [ ! -e "$INFO_BACKUP" ]; then
+      cp -a "$INFO_TARGET" "$INFO_BACKUP"
+      echo "backed up existing $INFO_TARGET -> $INFO_BACKUP"
+    fi
   fi
   cp -a "$P/lib/enigma.info" "$INFO_TARGET"
 
@@ -109,6 +135,12 @@ prepare)
     exit 1
   fi
   echo "all libs resolved"
+  broken=0
+  for link in "$P"/share/fonts/ttf/*.ttf; do
+    if [ ! -e "$link" ]; then echo "BROKEN font: $link"; broken=1; fi
+  done
+  [ "$broken" = 0 ] || { echo "ERROR: skin fonts are dangling"; exit 1; }
+  echo "skin fonts OK"
   echo "prepared. Next: $0 run --stop-current-e2"
   ;;
 
