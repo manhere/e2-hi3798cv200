@@ -1059,6 +1059,140 @@ open(p, 'w', encoding='utf-8', newline='\n').write(s)
 print('patched Videomode plugin.py (HistbVideoHotplug autostart)')
 PYEOF
 
+# --- 1h. drop analog video outputs, enable Videomode autostart ----------------
+# Analog video terminals (Scart / composite RCA) do not exist on DVBIP boxes:
+# remove the RCA/Scart port entries and every handler that indexes
+# config.av.videomode with the (stale) saved port unguarded. The stock
+# VideomodeHotplug autostart descriptor is commented out upstream, so the
+# histb hotplug listener never ran; enable it. A stale settings port value
+# (e.g. the historical "config.av.videoport=RCA" on this box) previously
+# crashed the A/V setup with KeyError 'RCA' in grabLastGoodMode.
+python3 - <<'PYEOF'
+p = 'lib/python/Plugins/SystemPlugins/Videomode/VideoHardware.py'
+s = open(p, encoding='utf-8').read()
+
+old = '''\tif BoxInfo.getItem("HasScart"):
+\t\tmodes["Scart"] = ["PAL", "NTSC", "Multi"]
+\telif BoxInfo.getItem("HasComposite"):
+\t\tmodes["RCA"] = ["576i", "PAL", "NTSC", "Multi"]
+\tif BoxInfo.getItem("HasYPbPr"):'''
+new = '''\t# Analog video outputs (Scart / composite RCA) are gone on modern sets:
+\t# only the HDMI/DVI port is exposed on this box.
+\tif BoxInfo.getItem("HasYPbPr"):'''
+assert s.count(old) == 1, 'VideoHardware analog-port branch anchor not found'
+s = s.replace(old, new)
+
+old = '''\t\tif "Scart" in self.modes and not self.getModeList("Scart"):
+\t\t\tprint("[VideoHardware] remove Scart because of not existing modes")
+\t\t\tdel self.modes["Scart"]
+'''
+assert s.count(old) == 1, 'VideoHardware Scart cleanup anchor not found'
+s = s.replace(old, '')
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched VideoHardware.py (removed RCA/Scart analog ports)')
+
+p = 'lib/python/Plugins/SystemPlugins/Videomode/plugin.py'
+s = open(p, encoding='utf-8').read()
+
+# (h1) grabLastGoodMode: a stale saved port (no modes) must not KeyError.
+old = '''\tdef grabLastGoodMode(self):
+\t\tport = config.av.videoport.value
+\t\tmode = config.av.videomode[port].value
+\t\trate = config.av.videorate[mode].value
+\t\tself.last_good = (port, mode, rate)'''
+new = '''\tdef grabLastGoodMode(self):
+\t\tport = config.av.videoport.value
+\t\tif port not in config.av.videomode:
+\t\t\t# A stale saved port (e.g. analog-output era) has no mode selections.
+\t\t\tself.last_good = None
+\t\t\treturn
+\t\tmode = config.av.videomode[port].value
+\t\trate = config.av.videorate[mode].value
+\t\tself.last_good = (port, mode, rate)'''
+assert s.count(old) == 1, 'plugin.py grabLastGoodMode anchor not found'
+s = s.replace(old, new)
+
+# (h2) apply(): same guard while restoring/reapplying.
+old = '''\tdef apply(self):
+\t\tport = config.av.videoport.value
+\t\tmode = config.av.videomode[port].value
+\t\trate = config.av.videorate[mode].value'''
+new = '''\tdef apply(self):
+\t\tport = config.av.videoport.value
+\t\tif port not in config.av.videomode:
+\t\t\treturn
+\t\tmode = config.av.videomode[port].value
+\t\trate = config.av.videorate[mode].value'''
+assert s.count(old) == 1, 'plugin.py apply anchor not found'
+s = s.replace(old, new)
+
+# (h3) stock VideomodeHotplug.hotplug: the autostart descriptor is enabled
+# below, so this handler now really runs and must skip a portless state.
+old = '''\tdef hotplug(self, what):
+\t\tprint("hotplug detected on port '%s'" % (what))
+\t\tport = config.av.videoport.value
+\t\tmode = config.av.videomode[port].value
+\t\trate = config.av.videorate[mode].value'''
+new = '''\tdef hotplug(self, what):
+\t\tprint("hotplug detected on port '%s'" % (what))
+\t\tport = config.av.videoport.value
+\t\tif port not in config.av.videomode:
+\t\t\treturn  # A disconnected/stale port has no selectable modes.
+\t\tmode = config.av.videomode[port].value
+\t\trate = config.av.videorate[mode].value'''
+assert s.count(old) == 1, 'plugin.py VideomodeHotplug.hotplug anchor not found'
+s = s.replace(old, new)
+
+# (h4) SCART-only settings items are dead code without the port.
+old = '''\t\tif config.av.videoport.value == "Scart":
+\t\t\tself.list.append((_("Color format"), config.av.colorformat, _("Configure which color format should be used on the SCART output.")))
+\t\t\tif level >= 1:
+\t\t\t\tself.list.append((_("WSS on 4:3"), config.av.wss, _("When enabled, content with an aspect ratio of 4:3 will be stretched to fit the screen.")))
+\t\t\t\tif BoxInfo.getItem("ScartSwitch"):
+\t\t\t\t\tself.list.append((_("Auto scart switching"), config.av.vcrswitch, _("When enabled, your receiver will detect activity on the VCR SCART input.")))
+
+'''
+assert s.count(old) == 1, 'plugin.py Scart settings block anchor not found'
+s = s.replace(old, '')
+
+# (h5) enable the autostart descriptor (commented out upstream): without it
+# the hotplug listeners (stock + HistbVideoHotplug) are never armed.
+old = '''#\t\tPluginDescriptor(where = [PluginDescriptor.WHERE_SESSIONSTART, PluginDescriptor.WHERE_AUTOSTART], fnc = autostart),
+\t\tPluginDescriptor(name=_("Video setup"), description=_("Advanced video setup"), where=PluginDescriptor.WHERE_MENU, needsRestart=False, fnc=startSetup)'''
+new = '''\t\tPluginDescriptor(where=[PluginDescriptor.WHERE_SESSIONSTART, PluginDescriptor.WHERE_AUTOSTART], fnc=autostart),
+\t\tPluginDescriptor(name=_("Video setup"), description=_("Advanced video setup"), where=PluginDescriptor.WHERE_MENU, needsRestart=False, fnc=startSetup)'''
+assert s.count(old) == 1, 'plugin.py autostart descriptor anchor not found'
+s = s.replace(old, new)
+
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched Videomode plugin.py (guards + Scart removal + autostart enabled)')
+
+p = 'lib/python/Plugins/SystemPlugins/Videomode/VideoWizard.py'
+s = open(p, encoding='utf-8').read()
+old = '''\tdef keyNumberGlobal(self, number):
+\t\tif number in (1, 2, 3):
+\t\t\tif number == 1:
+\t\t\t\tself.hw.saveMode("DVI", "720p", "multi")
+\t\t\telif number == 2:
+\t\t\t\tself.hw.saveMode("DVI", "1080i", "multi")
+\t\t\telif number == 3:
+\t\t\t\tself.hw.saveMode("Scart", "Multi", "multi")
+\t\t\tself.hw.setConfiguredMode()
+\t\t\tself.close()'''
+new = '''\tdef keyNumberGlobal(self, number):
+\t\tif number in (1, 2):
+\t\t\tif number == 1:
+\t\t\t\tself.hw.saveMode("DVI", "720p", "multi")
+\t\t\telif number == 2:
+\t\t\t\tself.hw.saveMode("DVI", "1080i", "multi")
+\t\t\tself.hw.setConfiguredMode()
+\t\t\tself.close()'''
+assert s.count(old) == 1, 'VideoWizard keyNumberGlobal anchor not found'
+s = s.replace(old, new)
+open(p, 'w', encoding='utf-8', newline='\n').write(s)
+print('patched VideoWizard.py (removed Scart number-3 hotkey)')
+PYEOF
+
 # --- 1e. hivxe-ffmpeg compile-time headers -----------------------------------
 # The backend dlopens the runtime libs already installed on the box
 # (/usr/local/lib/hivxe-ffmpeg, avcodec 63.1.101) but compiles against
