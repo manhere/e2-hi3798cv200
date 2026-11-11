@@ -59,6 +59,16 @@ sed -i 's/-Werror//g' configure.ac
 grep -q -- '-Werror' configure.ac && { echo "-Werror still present"; exit 1; } || true
 echo "stripped -Werror (configure.ac)"
 
+# The HAVE_HISTB decoder backend uses try/catch around std::thread startup
+# (std::system_error when the worker cannot spawn). enigma2 disables exceptions
+# globally (configure.ac ENIGMA2_CFLAGS="-fno-rtti -fno-exceptions ..."), which
+# makes the catch clause a compile error. Drop only -fno-exceptions: catching
+# std:: types does not need RTTI (their typeinfo lives in libstdc++), and the
+# backend never throws its own types or uses dynamic_cast/typeid.
+sed -i 's/-fno-rtti -fno-exceptions/-fno-rtti/' configure.ac
+grep -q -- '-fno-exceptions' configure.ac && { echo "-fno-exceptions still present"; exit 1; } || true
+echo "re-enabled exceptions (configure.ac)"
+
 # histb-vdp /dev/fb0 is the *generic DRM fbdev emulation*, not vendor hifb:
 #   drivers/gpu/drm/hisilicon/histb/histb-vdp-drv.c: drm_fbdev_dma_setup(drm, 32)
 #   drivers/gpu/drm/drm_fbdev_dma.c:        fix.smem_len = surface_height * pitches[0]
